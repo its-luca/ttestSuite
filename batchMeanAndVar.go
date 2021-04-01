@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"sync"
 )
 
 type BatchMeanAndVar struct {
@@ -30,10 +31,17 @@ func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
 		}
 	}
+
+	var wg sync.WaitGroup
 	for traceIDX, _ := range traces {
-		for pointIDX, _ := range traces[traceIDX] {
-			sum[pointIDX] += traces[traceIDX][pointIDX]
-		}
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			for pointIDX, _ := range traces[index] {
+				sum[pointIDX] += traces[index][pointIDX]
+			}
+		}(traceIDX)
+
 	}
 	return sum
 }
@@ -54,10 +62,16 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
 		}
 	}
+	var wg sync.WaitGroup
 	for traceIDX, _ := range traces {
-		for pointIDX, _ := range traces[traceIDX] {
-			sum[pointIDX] += math.Pow(traces[traceIDX][pointIDX], 2)
-		}
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			for pointIDX, _ := range traces[index] {
+				sum[pointIDX] += math.Pow(traces[index][pointIDX], 2)
+			}
+		}(traceIDX)
+
 	}
 	return sum
 }
@@ -91,11 +105,28 @@ func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
 	bmv.lenFixed += float64(len(fixed))
 	bmv.lenRandom += float64(len(random))
 
-	bmv.pwSumFixed = addPwSumFloat64(bmv.pwSumFixed, fixed)
-	bmv.pwSumRandom = addPwSumFloat64(bmv.pwSumRandom, random)
+	var wg sync.WaitGroup
+	wg.Add(4)
 
-	bmv.pwSumOfSquaresFixed = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresFixed, fixed)
-	bmv.pwSumOfSquaresRandom = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresRandom, random)
+	go func() {
+		defer wg.Done()
+		bmv.pwSumFixed = addPwSumFloat64(bmv.pwSumFixed, fixed)
+	}()
+	go func() {
+		defer wg.Done()
+
+		bmv.pwSumRandom = addPwSumFloat64(bmv.pwSumRandom, random)
+	}()
+	go func() {
+		defer wg.Done()
+		bmv.pwSumOfSquaresFixed = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresFixed, fixed)
+	}()
+	go func() {
+		defer wg.Done()
+		bmv.pwSumOfSquaresRandom = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresRandom, random)
+	}()
+
+	wg.Wait()
 }
 
 //calculate t test value for each point
@@ -118,8 +149,8 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 	pwVarFixed := make([]float64, traceLen)
 	pwVarRandom := make([]float64, traceLen)
 	for i := 0; i < traceLen; i++ {
-		pwVarFixed[i] = pwMeanFixed[i] - math.Pow(pwMeanFixed[i], 2)
-		pwVarRandom[i] = pwMeanRandom[i] - math.Pow(pwMeanRandom[i], 2)
+		pwVarFixed[i] = pwMeanSquaredFixed[i] - math.Pow(pwMeanFixed[i], 2)
+		pwVarRandom[i] = pwMeanSquaredRandom[i] - math.Pow(pwMeanRandom[i], 2)
 	}
 
 	//??

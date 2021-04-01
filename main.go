@@ -33,7 +33,7 @@ const (
 )
 
 //based on tectronix wfm spec, has basically zero error checks right now but seems to work
-func wfmToTraces(rawWFM []byte) ([][]float64, error) {
+func wfmToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 
 	numberOfFF := binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4])
 	//log.Printf("Number of fast frames is %v\n",numberOfFF)
@@ -64,14 +64,22 @@ func wfmToTraces(rawWFM []byte) ([][]float64, error) {
 	//log.Printf("precharge length is %v\n",preChargeBytes)
 	//log.Printf("data start = %x post start = %x\n => expecting %vdatapoints",offsetDataStart,offsetPostStartOffset,(offsetPostStartOffset-offsetDataStart)/2)
 
-	frames := make([][]float64, numberOfFF)
+	if frames == nil {
+		frames = make([][]float64, numberOfFF)
+	}
+
 	for frameIDX, _ := range frames {
 		start := offsetCurveBuffer + (frameIDX+1)*preChargeBytes + (frameIDX * datapointsPerFF * 2) + frameIDX*postChargeBytes
 		end := start + (datapointsPerFF * 2)
 		rawFrame := rawWFM[start:end]
-		frames[frameIDX] = make([]float64, datapointsPerFF)
+		if frames[frameIDX] == nil {
+			frames[frameIDX] = make([]float64, datapointsPerFF)
+		}
 		for i, _ := range frames[frameIDX] {
-			rawValue := binary.LittleEndian.Uint16(rawFrame[2*i : 2*i+2])
+			var rawValue int16
+			if err := binary.Read(bytes.NewReader(rawFrame[2*i:2*i+2]), binary.LittleEndian, &rawValue); err != nil {
+				return nil, fmt.Errorf("failed to parse frame %v entry %v to int16 : %v", frameIDX, i, err)
+			}
 			frames[frameIDX][i] = (float64(rawValue) * yScale) + yOffset
 		}
 	}
@@ -140,18 +148,22 @@ func main() {
 	}
 
 	var batchMeanAndVar *BatchMeanAndVar
+	var frames [][]float64
 	caseLogIDX := 0
 	for fileIDX := 0; fileIDX < *numTraces; fileIDX++ {
-		startTime := time.Now()
+		startTimeTotal := time.Now()
+
+		startTimeParing := time.Now()
 		//load data; fileIDX+1 to stick to previous naming convention
 		rawWFM, err := ioutil.ReadFile(path.Join(*pathTraceFolder, fmt.Sprintf("trace (%v).wfm", fileIDX+1)))
 		if err != nil {
 			log.Fatalf("Failed to read wfm file : %v\n", err)
 		}
-		frames, err := wfmToTraces(rawWFM)
+		frames, err = wfmToTraces(rawWFM, frames)
 		if err != nil {
 			log.Fatal("Failed to parse wfm file")
 		}
+		log.Printf("Parsing took %v\n", time.Since(startTimeParing))
 
 		//classify traces
 		fixedTraces := make([][]float64, 0)
@@ -166,6 +178,7 @@ func main() {
 			caseLogIDX++
 		}
 
+		startTimeProcessing := time.Now()
 		//update mean and var values
 		if batchMeanAndVar == nil {
 			var err error
@@ -176,8 +189,9 @@ func main() {
 		} else {
 			batchMeanAndVar.Update(fixedTraces, randomTraces)
 		}
+		log.Printf("Processing took %v\n", time.Since(startTimeProcessing))
 
-		log.Printf("Processed file %v out of %v in %v\n", fileIDX+1, *numTraces, time.Since(startTime))
+		log.Printf("Processed file %v out of %v in %v\n", fileIDX+1, *numTraces, time.Since(startTimeTotal))
 	}
 
 	if batchMeanAndVar == nil {
