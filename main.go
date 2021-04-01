@@ -76,10 +76,7 @@ func wfmToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 			frames[frameIDX] = make([]float64, datapointsPerFF)
 		}
 		for i, _ := range frames[frameIDX] {
-			var rawValue int16
-			if err := binary.Read(bytes.NewReader(rawFrame[2*i:2*i+2]), binary.LittleEndian, &rawValue); err != nil {
-				return nil, fmt.Errorf("failed to parse frame %v entry %v to int16 : %v", frameIDX, i, err)
-			}
+			rawValue := int16(binary.LittleEndian.Uint16(rawFrame[2*i : 2*i+2]))
 			frames[frameIDX][i] = (float64(rawValue) * yScale) + yOffset
 		}
 	}
