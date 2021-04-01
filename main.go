@@ -110,6 +110,57 @@ func parseCaseLog(rawLog []byte) ([]int, error) {
 	return caseLog, nil
 }
 
+func TTest(caseLog []int, numTraces int, pathTraceFolder string) (*BatchMeanAndVar, error) {
+	var batchMeanAndVar *BatchMeanAndVar
+	var frames [][]float64
+	caseLogIDX := 0
+	for fileIDX := 0; fileIDX < numTraces; fileIDX++ {
+		startTimeTotal := time.Now()
+
+		startTimeParing := time.Now()
+		//load data; fileIDX+1 to stick to previous naming convention
+		rawWFM, err := ioutil.ReadFile(path.Join(pathTraceFolder, fmt.Sprintf("trace (%v).wfm", fileIDX+1)))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read wfm file : %v", err)
+		}
+		frames, err = wfmToTraces(rawWFM, frames)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse wfm file")
+		}
+		log.Printf("Parsing took %v\n", time.Since(startTimeParing))
+
+		//classify traces
+		fixedTraces := make([][]float64, 0)
+		randomTraces := make([][]float64, 0)
+		log.Printf("Got, %v frames\n", len(frames))
+		for i, _ := range frames {
+			if caseLog[caseLogIDX] == 1 {
+				randomTraces = append(randomTraces, frames[i])
+			} else {
+				fixedTraces = append(fixedTraces, frames[i])
+			}
+			caseLogIDX++
+		}
+
+		startTimeProcessing := time.Now()
+		//update mean and var values
+		if batchMeanAndVar == nil {
+			var err error
+			batchMeanAndVar, err = NewBatchMeanAndVar(fixedTraces, randomTraces)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to init batch mean and var : %v\n", err)
+			}
+		} else {
+			batchMeanAndVar.Update(fixedTraces, randomTraces)
+		}
+		log.Printf("Processing took %v\n", time.Since(startTimeProcessing))
+
+		log.Printf("Processed file %v out of %v in %v\n", fileIDX+1, numTraces, time.Since(startTimeTotal))
+	}
+
+	return batchMeanAndVar, nil
+}
+
 func main() {
 
 	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing traces files (names trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
@@ -144,51 +195,9 @@ func main() {
 		log.Fatalf("Failed to parse case file : %v\n", err)
 	}
 
-	var batchMeanAndVar *BatchMeanAndVar
-	var frames [][]float64
-	caseLogIDX := 0
-	for fileIDX := 0; fileIDX < *numTraces; fileIDX++ {
-		startTimeTotal := time.Now()
-
-		startTimeParing := time.Now()
-		//load data; fileIDX+1 to stick to previous naming convention
-		rawWFM, err := ioutil.ReadFile(path.Join(*pathTraceFolder, fmt.Sprintf("trace (%v).wfm", fileIDX+1)))
-		if err != nil {
-			log.Fatalf("Failed to read wfm file : %v\n", err)
-		}
-		frames, err = wfmToTraces(rawWFM, frames)
-		if err != nil {
-			log.Fatal("Failed to parse wfm file")
-		}
-		log.Printf("Parsing took %v\n", time.Since(startTimeParing))
-
-		//classify traces
-		fixedTraces := make([][]float64, 0)
-		randomTraces := make([][]float64, 0)
-		log.Printf("Got, %v frames\n", len(frames))
-		for i, _ := range frames {
-			if caseLog[caseLogIDX] == 1 {
-				randomTraces = append(randomTraces, frames[i])
-			} else {
-				fixedTraces = append(fixedTraces, frames[i])
-			}
-			caseLogIDX++
-		}
-
-		startTimeProcessing := time.Now()
-		//update mean and var values
-		if batchMeanAndVar == nil {
-			var err error
-			batchMeanAndVar, err = NewBatchMeanAndVar(fixedTraces, randomTraces)
-			if err != nil {
-				log.Fatalf("Failed to init batch mean and var : %v\n", err)
-			}
-		} else {
-			batchMeanAndVar.Update(fixedTraces, randomTraces)
-		}
-		log.Printf("Processing took %v\n", time.Since(startTimeProcessing))
-
-		log.Printf("Processed file %v out of %v in %v\n", fileIDX+1, *numTraces, time.Since(startTimeTotal))
+	batchMeanAndVar, err := TTest(caseLog, *numTraces, *pathTraceFolder)
+	if err != nil {
+		log.Fatalf("Ttest failed : %v\n", err)
 	}
 
 	if batchMeanAndVar == nil {
