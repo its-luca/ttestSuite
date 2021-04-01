@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math"
+	"path"
+	"time"
 )
 
 const (
@@ -42,7 +45,7 @@ func wfmToTraces(rawWFM []byte) ([][]float64, error) {
 	if formatIdentifier != 0 {
 		return nil, fmt.Errorf("format identifier has unexpected value. this will be resolved in future version")
 	}
-	//log.Printf("Format identifier is   %v\n",formatIdentifier)
+	log.Printf("Format identifier is   %v\n", formatIdentifier)
 
 	//naNValue := uint16(binary.LittleEndian.Uint32(rawWFM[offsetOfNValue4B:offsetOfNValue4B+4]))
 	//log.Printf("naNValue  is  %v\n",naNValue)
@@ -103,16 +106,31 @@ func parseCaseLog(rawLog []byte) ([]int, error) {
 }
 
 func main() {
-	rawWFM, err := ioutil.ReadFile("./sample.wfm")
-	if err != nil {
-		log.Fatalf("Failed to read wfm file : %v\n", err)
+
+	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing traces files (names trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
+	numTraces := flag.Int("traceFileCount", 0, "Number of trace files")
+	pathCaseLogFile := flag.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line")
+
+	flag.Parse()
+
+	if *pathTraceFolder == "" {
+		fmt.Printf("Please set path to trace folder\n")
+		flag.PrintDefaults()
+		return
 	}
-	frames, err := wfmToTraces(rawWFM)
-	if err != nil {
-		log.Fatal("Failed to parse wfm file")
+	if *numTraces == 0 {
+		fmt.Printf("Please set number of trace files\n")
+		flag.PrintDefaults()
+		return
 	}
 
-	rawCaseFile, err := ioutil.ReadFile("./sample-case-log.txt")
+	if *pathCaseLogFile == "" {
+		fmt.Printf("Please set path to case log file\n")
+		flag.PrintDefaults()
+		return
+	}
+
+	rawCaseFile, err := ioutil.ReadFile(*pathCaseLogFile)
 	if err != nil {
 		log.Fatalf("Failed to read case file : %v\n", err)
 	}
@@ -121,13 +139,53 @@ func main() {
 		log.Fatalf("Failed to parse case file : %v\n", err)
 	}
 
-	if lenLog, lenFrames := len(caseLog), len(frames); lenLog != lenFrames {
-		log.Fatalf("Log length (%v) and frame count (%v) don't match\n", lenLog, lenFrames)
+	var batchMeanAndVar *BatchMeanAndVar
+	caseLogIDX := 0
+	for fileIDX := 0; fileIDX < *numTraces; fileIDX++ {
+		startTime := time.Now()
+		//load data; fileIDX+1 to stick to previous naming convention
+		rawWFM, err := ioutil.ReadFile(path.Join(*pathTraceFolder, fmt.Sprintf("trace (%v).wfm", fileIDX+1)))
+		if err != nil {
+			log.Fatalf("Failed to read wfm file : %v\n", err)
+		}
+		frames, err := wfmToTraces(rawWFM)
+		if err != nil {
+			log.Fatal("Failed to parse wfm file")
+		}
+
+		//classify traces
+		fixedTraces := make([][]float64, 0)
+		randomTraces := make([][]float64, 0)
+		log.Printf("Got, %v frames\n", len(frames))
+		for i, _ := range frames {
+			if caseLog[caseLogIDX] == 1 {
+				randomTraces = append(randomTraces, frames[i])
+			} else {
+				fixedTraces = append(fixedTraces, frames[i])
+			}
+			caseLogIDX++
+		}
+
+		//update mean and var values
+		if batchMeanAndVar == nil {
+			var err error
+			batchMeanAndVar, err = NewBatchMeanAndVar(fixedTraces, randomTraces)
+			if err != nil {
+				log.Fatalf("Failed to init batch mean and var : %v\n", err)
+			}
+		} else {
+			batchMeanAndVar.Update(fixedTraces, randomTraces)
+		}
+
+		log.Printf("Processed file %v out of %v in %v\n", fileIDX+1, *numTraces, time.Since(startTime))
 	}
 
-	for i, _ := range frames {
-		log.Printf("Trace %v is case %v, first entry %v last entry %v\n", i, caseLog[i], frames[i][0], frames[i][len(frames[i])-1])
-
+	if batchMeanAndVar == nil {
+		log.Fatal("You did not provide input files\n")
 	}
+	//Calc t test values
+	tValues := batchMeanAndVar.ComputeLQ()
+
+	fmt.Printf("First t values are %v\n", tValues[:10])
 
 }
