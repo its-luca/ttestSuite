@@ -32,15 +32,11 @@ func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 		}
 	}
 
-	var wg sync.WaitGroup
 	for traceIDX, _ := range traces {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			for pointIDX, _ := range traces[index] {
-				sum[pointIDX] += traces[index][pointIDX]
-			}
-		}(traceIDX)
+
+		for pointIDX, _ := range traces[traceIDX] {
+			sum[pointIDX] += traces[traceIDX][pointIDX]
+		}
 
 	}
 	return sum
@@ -62,16 +58,10 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
 		}
 	}
-	var wg sync.WaitGroup
 	for traceIDX, _ := range traces {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			for pointIDX, _ := range traces[index] {
-				sum[pointIDX] += math.Pow(traces[index][pointIDX], 2)
-			}
-		}(traceIDX)
-
+		for pointIDX, _ := range traces[traceIDX] {
+			sum[pointIDX] += math.Pow(traces[traceIDX][pointIDX], 2)
+		}
 	}
 	return sum
 }
@@ -158,7 +148,7 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 	for i := 0; i < traceLen; i++ {
 		tmpFixed := pwVarFixed[i] / bmv.lenFixed
 		tmpRandom := pwVarRandom[i] / bmv.lenRandom
-		denom[i] = math.Pow(tmpFixed+tmpRandom, 2)
+		denom[i] = math.Sqrt(tmpFixed + tmpRandom)
 	}
 
 	tValues := make([]float64, traceLen)
