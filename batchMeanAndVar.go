@@ -1,5 +1,7 @@
 package main
 
+//Mean and Variances computation for Fixed vs Random T-test
+
 import (
 	"fmt"
 	"math"
@@ -13,6 +15,7 @@ type BatchMeanAndVar struct {
 	pwSumRandom          []float64
 	pwSumOfSquaresFixed  []float64
 	pwSumOfSquaresRandom []float64
+	datapointsPerTrace   int
 }
 
 func minInt(a, b int) int {
@@ -52,27 +55,19 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
-func NewBatchMeanAndVar(fixed, random [][]float64) (*BatchMeanAndVar, error) {
-	if len(fixed) == 0 || len(random) == 0 {
-		return nil, fmt.Errorf("fixed or random set is empty")
-	}
-	if len(fixed[0]) != len(random[1]) {
-		return nil, fmt.Errorf("number of datpoints per trace in fixed is %v but in random it's %v\n",
-			len(fixed[0]), len(random[0]))
-	}
+func NewBatchMeanAndVar(datapointsPerTrace int) *BatchMeanAndVar {
 
 	bmv := &BatchMeanAndVar{
 		lenFixed:             float64(0),
 		lenRandom:            float64(0),
-		pwSumFixed:           make([]float64, len(fixed[0])),
-		pwSumRandom:          make([]float64, len(fixed[0])),
-		pwSumOfSquaresFixed:  make([]float64, len(fixed[0])),
-		pwSumOfSquaresRandom: make([]float64, len(fixed[0])),
+		pwSumFixed:           make([]float64, datapointsPerTrace),
+		pwSumRandom:          make([]float64, datapointsPerTrace),
+		pwSumOfSquaresFixed:  make([]float64, datapointsPerTrace),
+		pwSumOfSquaresRandom: make([]float64, datapointsPerTrace),
+		datapointsPerTrace:   datapointsPerTrace,
 	}
 
-	bmv.Update(fixed, random)
-
-	return bmv, nil
+	return bmv
 }
 
 func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
@@ -104,12 +99,12 @@ func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
 //calculate t test value for each point
 func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 	//calc pw means; we assured that batch array are of same length
-	traceLen := len(bmv.pwSumRandom)
-	pwMeanFixed := make([]float64, traceLen)
-	pwMeanRandom := make([]float64, traceLen)
-	pwMeanSquaredFixed := make([]float64, traceLen)
-	pwMeanSquaredRandom := make([]float64, traceLen)
-	for i := 0; i < traceLen; i++ {
+
+	pwMeanFixed := make([]float64, bmv.datapointsPerTrace)
+	pwMeanRandom := make([]float64, bmv.datapointsPerTrace)
+	pwMeanSquaredFixed := make([]float64, bmv.datapointsPerTrace)
+	pwMeanSquaredRandom := make([]float64, bmv.datapointsPerTrace)
+	for i := 0; i < bmv.datapointsPerTrace; i++ {
 		pwMeanFixed[i] = bmv.pwSumFixed[i] / bmv.lenFixed
 		pwMeanRandom[i] = bmv.pwSumRandom[i] / bmv.lenRandom
 
@@ -118,23 +113,23 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 	}
 
 	//calc pw var
-	pwVarFixed := make([]float64, traceLen)
-	pwVarRandom := make([]float64, traceLen)
-	for i := 0; i < traceLen; i++ {
+	pwVarFixed := make([]float64, bmv.datapointsPerTrace)
+	pwVarRandom := make([]float64, bmv.datapointsPerTrace)
+	for i := 0; i < bmv.datapointsPerTrace; i++ {
 		pwVarFixed[i] = pwMeanSquaredFixed[i] - math.Pow(pwMeanFixed[i], 2)
 		pwVarRandom[i] = pwMeanSquaredRandom[i] - math.Pow(pwMeanRandom[i], 2)
 	}
 
 	//??
-	denom := make([]float64, traceLen)
-	for i := 0; i < traceLen; i++ {
+	denom := make([]float64, bmv.datapointsPerTrace)
+	for i := 0; i < bmv.datapointsPerTrace; i++ {
 		tmpFixed := pwVarFixed[i] / bmv.lenFixed
 		tmpRandom := pwVarRandom[i] / bmv.lenRandom
 		denom[i] = math.Sqrt(tmpFixed + tmpRandom)
 	}
 
-	tValues := make([]float64, traceLen)
-	for i := 0; i < traceLen; i++ {
+	tValues := make([]float64, bmv.datapointsPerTrace)
+	for i := 0; i < bmv.datapointsPerTrace; i++ {
 		tValues[i] = (pwMeanFixed[i] - pwMeanRandom[i]) / denom[i]
 	}
 
@@ -142,19 +137,17 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 
 }
 
-//merges b into a and returns a
-func MergeBatchMeanAndVar(a, b *BatchMeanAndVar) *BatchMeanAndVar {
-	a.lenFixed += b.lenFixed
-	a.lenRandom += b.lenRandom
+//merges other into bmv
+func (bmv *BatchMeanAndVar) MergeBatchMeanAndVar(other *BatchMeanAndVar) {
+	bmv.lenFixed += other.lenFixed
+	bmv.lenRandom += other.lenRandom
 
-	datapoints := len(a.pwSumOfSquaresRandom)
-	for i := 0; i < datapoints; i++ {
-		a.pwSumOfSquaresRandom[i] += b.pwSumOfSquaresRandom[i]
-		a.pwSumOfSquaresFixed[i] += b.pwSumOfSquaresFixed[i]
+	for i := 0; i < bmv.datapointsPerTrace; i++ {
+		bmv.pwSumOfSquaresRandom[i] += other.pwSumOfSquaresRandom[i]
+		bmv.pwSumOfSquaresFixed[i] += other.pwSumOfSquaresFixed[i]
 
-		a.pwSumRandom[i] += b.pwSumRandom[i]
-		a.pwSumFixed[i] += b.pwSumFixed[i]
+		bmv.pwSumRandom[i] += other.pwSumRandom[i]
+		bmv.pwSumFixed[i] += other.pwSumFixed[i]
 	}
 
-	return a
 }

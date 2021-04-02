@@ -44,7 +44,7 @@ func parseCSVToFloat64(csvData []byte) ([][]float64, error) {
 
 func Test_wfmToTraces(t *testing.T) {
 	//load correct results from csv file
-	csvData, err := ioutil.ReadFile("./correct-first-3-rows.csv")
+	csvData, err := ioutil.ReadFile("./testData/correct-first-3-rows.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
 	}
@@ -55,7 +55,7 @@ func Test_wfmToTraces(t *testing.T) {
 	}
 
 	//load test input
-	rawWFM, err := ioutil.ReadFile("./trace (1).wfm")
+	rawWFM, err := ioutil.ReadFile("./testData/trace (1).wfm")
 	if err != nil {
 		t.Fatalf("Failed to read test input :%v\n", err)
 	}
@@ -95,7 +95,7 @@ func Test_wfmToTraces(t *testing.T) {
 
 func Test_parseAndTTest(t *testing.T) {
 	//load correct results from csv file
-	csvData, err := ioutil.ReadFile("./correct-t-values.csv")
+	csvData, err := ioutil.ReadFile("./testData/correct-t-values.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
 	}
@@ -105,7 +105,7 @@ func Test_parseAndTTest(t *testing.T) {
 		t.Fatalf("Failed to parse correct t test values from file %v\n", err)
 	}
 	wanTValues := tmp[0]
-	rawCaseFile, err := ioutil.ReadFile("./sample-case-log.txt")
+	rawCaseFile, err := ioutil.ReadFile("./testData/sample-case-log.txt")
 	if err != nil {
 		t.Fatalf("Failed to read case file : %v\n", err)
 	}
@@ -116,7 +116,7 @@ func Test_parseAndTTest(t *testing.T) {
 
 	simManyFilesReader := &TraceFileReader{
 		totalFileCount: 32,
-		folderPath:     "./",
+		folderPath:     "./testData/",
 		//NOTE then constant file name! This way we simulate processing many files without having to ship them
 		idToFileName: func(id int) string {
 			return fmt.Sprintf("trace (%v).wfm", 1)
