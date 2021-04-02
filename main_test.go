@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/pbnjay/memory"
 	"io/ioutil"
 	"log"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,43 +47,38 @@ func Test_wfmToTraces(t *testing.T) {
 	csvData, err := ioutil.ReadFile("./correct-first-3-rows.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
-		t.FailNow()
 	}
 
 	correctTraces, err := parseCSVToFloat64(csvData)
 	if err != nil {
 		t.Fatal(err)
-		t.FailNow()
 	}
 
 	//load test input
 	rawWFM, err := ioutil.ReadFile("./trace (1).wfm")
 	if err != nil {
 		t.Fatalf("Failed to read test input :%v\n", err)
-		t.FailNow()
 	}
 
 	//call function that we want to test
 	frames, err := wfmToTraces(rawWFM, nil)
 	if err != nil {
 		t.Fatalf("unexpected Error %v\n", err)
-		t.FailNow()
 	}
 
 	//we only check the first few traces
 	if len(frames) < len(correctTraces) {
 		t.Fatalf("ouput needs at least %v traces for the test but we got %v", len(correctTraces), len(frames))
-		t.FailNow()
 	}
 
 	errCounter := 0
 	errThresh := 5
 	//compare output
-	for traceIDX, _ := range correctTraces {
+	for traceIDX := range correctTraces {
 		if gotLen, wantLen := len(frames[traceIDX]), len(correctTraces[traceIDX]); gotLen != wantLen {
 			t.Errorf("trace %v has length %v but we want %v\n", traceIDX, gotLen, wantLen)
 		}
-		for i, _ := range frames {
+		for i := range frames {
 			if got, want := frames[traceIDX][i], correctTraces[traceIDX][i]; math.Abs(got-want) > 0.001 {
 				t.Errorf("trace %v entry %v got %v want %v\n", traceIDX, i, got, want)
 				errCounter++
@@ -101,29 +98,47 @@ func Test_parseAndTTest(t *testing.T) {
 	csvData, err := ioutil.ReadFile("./correct-t-values.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
-		t.FailNow()
 	}
 
 	tmp, err := parseCSVToFloat64(csvData)
 	if err != nil {
 		t.Fatalf("Failed to parse correct t test values from file %v\n", err)
-		t.FailNow()
 	}
 	wanTValues := tmp[0]
 	rawCaseFile, err := ioutil.ReadFile("./sample-case-log.txt")
 	if err != nil {
 		t.Fatalf("Failed to read case file : %v\n", err)
-		t.FailNow()
 	}
 	caseLog, err := parseCaseLog(rawCaseFile)
 	if err != nil {
 		log.Fatalf("Failed to parse case file : %v\n", err)
 	}
 
-	batchMeanAndVar, err := TTest(caseLog, 1, "./")
+	simManyFilesReader := &TraceFileReader{
+		totalFileCount: 32,
+		folderPath:     "./",
+		//NOTE then constant file name! This way we simulate processing many files without having to ship them
+		idToFileName: func(id int) string {
+			return fmt.Sprintf("trace (%v).wfm", 1)
+		},
+	}
+
+	//prepare caseLog for repeated reading
+	tmpCaseLog := make([]int, 0, simManyFilesReader.totalFileCount*len(caseLog))
+	for i := 0; i < simManyFilesReader.totalFileCount; i++ {
+		tmpCaseLog = append(tmpCaseLog, caseLog...)
+	}
+	caseLog = tmpCaseLog
+
+	config := Config{
+		ComputeWorkers: runtime.NumCPU() - 1,
+		FeederWorkers:  1,
+		BufferSizeInGB: maxInt(1, int(memory.TotalMemory()/Giga)-10),
+	}
+
+	batchMeanAndVar, err := TTest(caseLog, simManyFilesReader, config)
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
-		t.FailNow()
 	}
 
 	gotTValues := batchMeanAndVar.ComputeLQ()
@@ -142,7 +157,6 @@ func Test_parseAndTTest(t *testing.T) {
 			errCnt++
 			if errCnt > errThresh {
 				t.Fatalf("To many errrors, abort\n")
-				t.FailNow()
 			}
 		}
 	}
