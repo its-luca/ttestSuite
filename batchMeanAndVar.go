@@ -15,13 +15,11 @@ type BatchMeanAndVar struct {
 	pwSumOfSquaresRandom []float64
 }
 
-//returns the sum of the entries
-func sumFloat64(s []float64) float64 {
-	sum := float64(0)
-	for i, _ := range s {
-		sum += s[i]
+func minInt(a, b int) int {
+	if a > b {
+		return b
 	}
-	return sum
+	return a
 }
 
 //updates the point ise sums in sum with the datapoints in traces
@@ -31,22 +29,10 @@ func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
 		}
 	}
-
-	for traceIDX, _ := range traces {
-
-		for pointIDX, _ := range traces[traceIDX] {
+	for traceIDX := range traces {
+		for pointIDX := range traces[traceIDX] {
 			sum[pointIDX] += traces[traceIDX][pointIDX]
 		}
-
-	}
-	return sum
-}
-
-//returns the sum of the squares of each entry
-func sumOfSquaresFloat64(s []float64) float64 {
-	sum := float64(0)
-	for i, _ := range s {
-		sum += math.Pow(s[i], 2)
 	}
 	return sum
 }
@@ -58,8 +44,8 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
 		}
 	}
-	for traceIDX, _ := range traces {
-		for pointIDX, _ := range traces[traceIDX] {
+	for traceIDX := range traces {
+		for pointIDX := range traces[traceIDX] {
 			sum[pointIDX] += math.Pow(traces[traceIDX][pointIDX], 2)
 		}
 	}
@@ -75,19 +61,17 @@ func NewBatchMeanAndVar(fixed, random [][]float64) (*BatchMeanAndVar, error) {
 			len(fixed[0]), len(random[0]))
 	}
 
-	pwSumFixed := make([]float64, len(fixed[0]))
-	pwSumSquaredFixed := make([]float64, len(fixed[0]))
-	pwSumRandom := make([]float64, len(random[0]))
-	pwSumSquaredRandom := make([]float64, len(random[0]))
-
 	bmv := &BatchMeanAndVar{
-		lenFixed:             float64(len(fixed)),
-		lenRandom:            float64(len(random)),
-		pwSumFixed:           addPwSumFloat64(pwSumFixed, fixed),
-		pwSumRandom:          addPwSumFloat64(pwSumRandom, random),
-		pwSumOfSquaresFixed:  addPwSumOfSquaresFloat64(pwSumSquaredFixed, fixed),
-		pwSumOfSquaresRandom: addPwSumOfSquaresFloat64(pwSumSquaredRandom, random),
+		lenFixed:             float64(0),
+		lenRandom:            float64(0),
+		pwSumFixed:           make([]float64, len(fixed[0])),
+		pwSumRandom:          make([]float64, len(fixed[0])),
+		pwSumOfSquaresFixed:  make([]float64, len(fixed[0])),
+		pwSumOfSquaresRandom: make([]float64, len(fixed[0])),
 	}
+
+	bmv.Update(fixed, random)
+
 	return bmv, nil
 }
 
@@ -97,14 +81,12 @@ func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
 
 	var wg sync.WaitGroup
 	wg.Add(4)
-
 	go func() {
 		defer wg.Done()
 		bmv.pwSumFixed = addPwSumFloat64(bmv.pwSumFixed, fixed)
 	}()
 	go func() {
 		defer wg.Done()
-
 		bmv.pwSumRandom = addPwSumFloat64(bmv.pwSumRandom, random)
 	}()
 	go func() {
@@ -158,4 +140,21 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 
 	return tValues
 
+}
+
+//merges b into a and returns a
+func MergeBatchMeanAndVar(a, b *BatchMeanAndVar) *BatchMeanAndVar {
+	a.lenFixed += b.lenFixed
+	a.lenRandom += b.lenRandom
+
+	datapoints := len(a.pwSumOfSquaresRandom)
+	for i := 0; i < datapoints; i++ {
+		a.pwSumOfSquaresRandom[i] += b.pwSumOfSquaresRandom[i]
+		a.pwSumOfSquaresFixed[i] += b.pwSumOfSquaresFixed[i]
+
+		a.pwSumRandom[i] += b.pwSumRandom[i]
+		a.pwSumFixed[i] += b.pwSumFixed[i]
+	}
+
+	return a
 }
