@@ -33,11 +33,21 @@ func feederWorker(feederID, start, end, tracesPerFile int, traceSource TraceBloc
 	}()
 	log.Printf("Feeder %v started on range [%v,%v[\n", feederID, start, end)
 	traceBlockIDX := start
+	metricsTicker := time.NewTicker(1 * time.Second)
+	processedElements := 0
+	readTimeSinceLastTick := 0 * time.Second
+	enqueueWaitSinceLastTick := 0 * time.Second
 	for {
 		select {
 		case <-wCtx.shouldQuit:
 			log.Printf("Feeder quits because there was an error")
 			return
+		case <-metricsTicker.C:
+			log.Printf("Feeder %v:\t avg read time %v\t avg enq wait %v\n", feederID,
+				readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements))
+			processedElements = 0
+			readTimeSinceLastTick = 0
+			enqueueWaitSinceLastTick = 0
 		default:
 			{
 				if traceBlockIDX >= end {
@@ -61,9 +71,11 @@ func feederWorker(feederID, start, end, tracesPerFile int, traceSource TraceBloc
 					file:       rawWFM,
 					subCaseLog: caseLog[startIDX:stopIDX],
 				}
-				log.Printf("feeder prepared job  %v in %v\n", traceBlockIDX, time.Since(startTime))
+				readTimeSinceLastTick += time.Since(startTime)
+				startTime = time.Now()
 				wCtx.jobs <- flb
-				log.Printf("feeder prepared+enqured job  %v in %v\n", traceBlockIDX, time.Since(startTime))
+				enqueueWaitSinceLastTick += time.Since(startTime)
+				processedElements++
 				traceBlockIDX++
 			}
 		}
@@ -95,7 +107,7 @@ func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndV
 					resultChan <- batchMeAndAndVar
 					return
 				}
-				start := time.Now()
+				//start := time.Now()
 				//log.Printf("Worker %v received job for fileIDX %v\n",workerID,workPackage.fileIDX)
 				//load data; fileIDX+1 to stick to previous naming convention
 				frames, err = wfmToTraces(workPackage.file, frames)
@@ -122,7 +134,7 @@ func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndV
 				}
 				batchMeAndAndVar.Update(fixedTraces, randomTraces)
 
-				log.Printf("worker %v processed job %v in %v\n", workerID, workPackage.fileIDX, time.Since(start))
+				//log.Printf("worker %v processed job %v in %v\n", workerID, workPackage.fileIDX, time.Since(start))
 			}
 		}
 	}
@@ -191,11 +203,28 @@ func TTest(caseLog []int, traceSource TraceBlockReader, config Config) (*BatchMe
 	tracesPerFile := len(testFrames)
 	fmt.Printf("Traces per file: %v\n", tracesPerFile)
 
-	jobs := make(chan *FileLogBundle, maxInt(1, config.BufferSizeInGB/(len(testFile)*Giga)))
+	jobQueueLen := maxInt(1, (config.BufferSizeInGB*1024)/(len(testFile)/Mega))
+	log.Printf("jobQueueLen %v (buff\n", jobQueueLen)
+	jobs := make(chan *FileLogBundle, jobQueueLen)
 	errorChan := make(chan error)
 	shouldQuit := make(chan interface{})
 	resultChan := make(chan *BatchMeanAndVar, config.ComputeWorkers)
 	var computeWorkerWg, feederWorkerWg sync.WaitGroup
+
+	//stats ticker
+	statsTicker := time.NewTicker(1 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-shouldQuit:
+				return
+			case <-statsTicker.C:
+				{
+					log.Printf("Buffer Usage %v out of %v\n", len(jobs), cap(jobs))
+				}
+			}
+		}
+	}()
 
 	computeWorkerCtx := workerContext{
 		jobs:       jobs,
@@ -239,6 +268,7 @@ func TTest(caseLog []int, traceSource TraceBlockReader, config Config) (*BatchMe
 	log.Printf("closed jobs channel, waiting wor compute workers to finish\n")
 	//wait for compute workers to finish outstanding jobs
 	computeWorkerCtx.wg.Wait()
+	shouldQuit <- nil
 	log.Printf("compute workers finished\n")
 	//all workers done, no one can send errors anymore
 	close(errorChan)

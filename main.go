@@ -11,6 +11,7 @@ import (
 
 //Si unit prefix
 const Giga = 1024 * 1024 * 1024
+const Mega = 1024 * 1024
 
 //Defines CPU and memory usage
 type Config struct {
