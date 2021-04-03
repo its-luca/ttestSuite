@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 	"wfmParser/httpReceiver"
 	"wfmParser/traceSource"
@@ -39,6 +42,7 @@ func main() {
 	numFeeders := flag.Int("numFeeders", 1, "Number of threads for reading input files (in our lab reading a single file does not max out network connectivity). Influences I/O usage")
 	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
 	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability")
+	out := flag.String("out", "./t-values.csv", "Path t-test result file")
 
 	flag.Parse()
 
@@ -94,7 +98,7 @@ func main() {
 	var traceReader traceSource.TraceBlockReader
 	if *streamFromAddr == "" {
 		var err error
-		traceReader, err = traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, path.Base(*pathCaseLogFile))
+		traceReader, err = traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*pathCaseLogFile))
 		if err != nil {
 			log.Fatalf("failed to create trace file reader : %v", err)
 		}
@@ -129,7 +133,7 @@ func main() {
 
 		*traceFileCount, filenameUpdates = receiver.WaitForMeasureStart(receiverCtx)
 
-		traceReader = traceSource.NewStreamingTraceFileReader(*traceFileCount, *pathTraceFolder, path.Base(*pathCaseLogFile), filenameUpdates)
+		traceReader = traceSource.NewStreamingTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*pathCaseLogFile), filenameUpdates)
 	}
 
 	batchMeanAndVar, err := TTest(traceReader, config)
@@ -144,5 +148,57 @@ func main() {
 	tValues := batchMeanAndVar.ComputeLQ()
 
 	fmt.Printf("First t values are %v\n", tValues[:10])
+
+	doesFileExists := func(path string) bool {
+		_, err := os.Stat(path)
+		return !os.IsNotExist(err)
+	}
+	fileExtension := ""
+	outPath := filepath.Dir(*out)
+	tokens := strings.Split(filepath.Base(*out), ".")
+	if len(tokens) > 1 {
+		fileExtension = tokens[1]
+	}
+	nameCandidate := filepath.Base(*out)
+	suffix := 1
+	fileNameCollision := doesFileExists(*out)
+	for fileNameCollision && suffix < 100 {
+		//file with *out as name already exists
+		nameCandidate = fmt.Sprintf("%v-%v.%v", strings.Split(path.Base(*out), ".")[0], suffix, fileExtension)
+		fileNameCollision = doesFileExists(filepath.Join(outPath, nameCandidate))
+		if fileNameCollision {
+			suffix++
+		}
+
+	}
+	if fileNameCollision {
+		log.Printf("Filename collision avoidance failed, overwriting\n")
+	} else if suffix > 1 {
+		fmt.Printf("Detected name colision, renamed %v to %v\n", path.Base(*out), nameCandidate)
+	}
+
+	*out = filepath.Join(outPath, nameCandidate)
+	outFile, err := os.Create(filepath.Join(outPath, nameCandidate))
+	defer outFile.Close()
+	if err != nil {
+		log.Printf("%v\n", err)
+		fmt.Printf("Failed to write to %v, dumping data to console instead\nlength=%v\n%v\n", *out, len(tValues), tValues)
+		return
+	}
+
+	tValuesAsStrings := make([]string, len(tValues))
+	for i := range tValues {
+		tValuesAsStrings[i] = fmt.Sprintf("%f", tValues[i])
+	}
+	csvWriter := csv.NewWriter(outFile)
+	if err := csvWriter.Write(tValuesAsStrings); err != nil {
+		fmt.Printf("Failed to write to outputfile  %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(tValues), tValues)
+		return
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		fmt.Printf("Failed to flush to outputfile %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(tValues), tValues)
+		return
+	}
 
 }

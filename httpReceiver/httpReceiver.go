@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"path"
+	"path/filepath"
 )
 
 type receiver struct {
@@ -85,7 +85,7 @@ func (recv *receiver) handleMeasureUpdate(w http.ResponseWriter, r *http.Request
 	}
 
 	//extract only the file name
-	msg.FileName = path.Base(msg.FileName)
+	msg.FileName = filepath.Base(msg.FileName)
 	if msg.FileName == "" || msg.FileName == "." || msg.FileName == "/" {
 		http.Error(w, fmt.Sprintf("%v is and invalid file name", msg.FileName), http.StatusBadRequest)
 		log.Printf("invalid file name %v", msg.FileName)

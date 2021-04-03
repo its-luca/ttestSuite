@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -16,7 +17,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	const wantTotalFileCount = 5
 	const folderPath = "../testData"
 	const traceFileName = "trace (1).wfm"
-	traceFilePath := path.Join(folderPath, traceFileName)
+	traceFilePath := filepath.Join(folderPath, traceFileName)
 	const caseFileName = "tmp-case-file.txt"
 	newFiles := make(chan string)
 
@@ -24,7 +25,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read test file %v\n", err)
 	}
-	rawCaseFile, err := ioutil.ReadFile(path.Join(folderPath, "sample-case-log.txt"))
+	rawCaseFile, err := ioutil.ReadFile(filepath.Join(folderPath, "sample-case-log.txt"))
 	if err != nil {
 		t.Fatalf("Failed to read raw case file %v\n", err)
 	}
@@ -33,7 +34,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 		t.Fatalf("Failed to parse test case data : %v\n", err)
 	}
 
-	testCaseFile, err := os.Create(path.Join(folderPath, "tmp-case-file.txt"))
+	testCaseFile, err := os.Create(filepath.Join(folderPath, "tmp-case-file.txt"))
 	if err != nil {
 		t.Fatalf("Failed to create test case file: %v\n", err)
 	}

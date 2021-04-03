@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"path"
+	"path/filepath"
 	"wfmParser/wfm"
 )
 
@@ -63,11 +63,11 @@ func NewDefaultTraceFileReader(fileCount int, folderPath, caseFileName string) (
 			return fmt.Sprintf("trace (%v).wfm", id+1)
 		},
 	}
-	rawFile, err := ioutil.ReadFile(path.Join(tfr.folderPath, tfr.idToFileName(0)))
+	rawFile, err := ioutil.ReadFile(filepath.Join(tfr.folderPath, tfr.idToFileName(0)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get traces per file : %v", err)
 	}
-	rawCaseLog, err := ioutil.ReadFile(path.Join(tfr.folderPath, caseFileName))
+	rawCaseLog, err := ioutil.ReadFile(filepath.Join(tfr.folderPath, caseFileName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read case file : %v", err)
 	}
@@ -85,7 +85,7 @@ func (recv *TraceFileReader) TotalBlockCount() int {
 }
 
 func (recv *TraceFileReader) GetBlock(nr int) ([]byte, []int, error) {
-	fileContent, err := ioutil.ReadFile(path.Join(recv.folderPath, recv.idToFileName(nr)))
+	fileContent, err := ioutil.ReadFile(filepath.Join(recv.folderPath, recv.idToFileName(nr)))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read wfm file : %v", err)
 	}
@@ -143,7 +143,7 @@ func (recv *StreamingTraceFileReader) GetBlock(nr int) ([]byte, []int, error) {
 			recv.availableFiles = append(recv.availableFiles, newFileName)
 		}
 		//update case file
-		rawCaseLog, err := ioutil.ReadFile(path.Join(recv.folderPath, recv.caseFileName))
+		rawCaseLog, err := ioutil.ReadFile(filepath.Join(recv.folderPath, recv.caseFileName))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read case file : %v", err)
 		}
@@ -154,7 +154,7 @@ func (recv *StreamingTraceFileReader) GetBlock(nr int) ([]byte, []int, error) {
 	}
 
 	//file already available, just read and return
-	fileContent, err := ioutil.ReadFile(path.Join(recv.folderPath, recv.availableFiles[nr]))
+	fileContent, err := ioutil.ReadFile(filepath.Join(recv.folderPath, recv.availableFiles[nr]))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read wfm file : %v", err)
 	}
