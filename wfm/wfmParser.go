@@ -1,10 +1,11 @@
-package main
+package wfm
 
 //extracts trace data from tektronix wfm files
 
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math"
 )
 
@@ -27,14 +28,18 @@ const (
 	offsetOfOffsetPostchargeStop  = 0x33e
 )
 
-//based on tectronix wfm spec, has basically zero error checks right now but seems to work
-func wfmToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
+func GetNumberOfTraces(rawWFM []byte) int {
+	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4]))
+}
 
-	numberOfFF := binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4])
-	//log.Printf("Number of fast frames is %v\n",numberOfFF)
+//based on tectronix wfm spec, has basically zero error checks right now but seems to work
+func WFMToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
+
+	numberOfTraces := GetNumberOfTraces(rawWFM)
+	log.Printf("Number of fast frames is %v\n", numberOfTraces)
 
 	datapointsPerFF := int(binary.LittleEndian.Uint32(rawWFM[offsetHorizontalDimSize4BUint : offsetHorizontalDimSize4BUint+4]))
-	//log.Printf("Datapoints per fast frame is  %v\n",datapointsPerFF)
+	log.Printf("Datapoints per fast frame is  %v\n", datapointsPerFF)
 
 	formatIdentifier := int(binary.LittleEndian.Uint32(rawWFM[offsetOfFormat4BInt : offsetOfFormat4BInt+4]))
 	if formatIdentifier != 0 {
@@ -60,7 +65,7 @@ func wfmToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 	//log.Printf("data start = %x post start = %x\n => expecting %vdatapoints",offsetDataStart,offsetPostStartOffset,(offsetPostStartOffset-offsetDataStart)/2)
 
 	if frames == nil {
-		frames = make([][]float64, numberOfFF)
+		frames = make([][]float64, numberOfTraces)
 	}
 
 	for frameIDX := range frames {

@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"github.com/pbnjay/memory"
 	"io/ioutil"
-	"log"
 	"math"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"wfmParser/traceSource"
+	"wfmParser/wfm"
 )
 
 func parseCSVToFloat64(csvData []byte) ([][]float64, error) {
@@ -61,7 +62,7 @@ func Test_wfmToTraces(t *testing.T) {
 	}
 
 	//call function that we want to test
-	frames, err := wfmToTraces(rawWFM, nil)
+	frames, err := wfm.WFMToTraces(rawWFM, nil)
 	if err != nil {
 		t.Fatalf("unexpected Error %v\n", err)
 	}
@@ -93,6 +94,20 @@ func Test_wfmToTraces(t *testing.T) {
 
 }
 
+type mockManyFileSimTraceFileReader struct {
+	totalFileCount int
+	file           []byte
+	caseLog        []int
+}
+
+func (m *mockManyFileSimTraceFileReader) TotalBlockCount() int {
+	return m.totalFileCount
+}
+
+func (m *mockManyFileSimTraceFileReader) GetBlock(_ int) ([]byte, []int, error) {
+	return m.file, m.caseLog, nil
+}
+
 func Test_parseAndTTest(t *testing.T) {
 	//load correct results from csv file
 	csvData, err := ioutil.ReadFile("./testData/correct-t-values.csv")
@@ -109,18 +124,20 @@ func Test_parseAndTTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read case file : %v\n", err)
 	}
-	caseLog, err := parseCaseLog(rawCaseFile)
+	caseLog, err := traceSource.ParseCaseLog(rawCaseFile)
 	if err != nil {
-		log.Fatalf("Failed to parse case file : %v\n", err)
+		t.Fatalf("Failed to parse case log file")
 	}
 
-	simManyFilesReader := &TraceFileReader{
+	rawTraceFile, err := ioutil.ReadFile("./testData/trace (1).wfm")
+	if err != nil {
+		t.Fatalf("Failed to read trace file : %v\n", err)
+	}
+
+	simManyFilesReader := &mockManyFileSimTraceFileReader{
 		totalFileCount: 32,
-		folderPath:     "./testData/",
-		//NOTE then constant file name! This way we simulate processing many files without having to ship them
-		idToFileName: func(id int) string {
-			return fmt.Sprintf("trace (%v).wfm", 1)
-		},
+		file:           rawTraceFile,
+		caseLog:        caseLog,
 	}
 
 	//prepare caseLog for repeated reading
@@ -129,6 +146,8 @@ func Test_parseAndTTest(t *testing.T) {
 		tmpCaseLog = append(tmpCaseLog, caseLog...)
 	}
 	caseLog = tmpCaseLog
+	simManyFilesReader.caseLog = caseLog
+	//hacky file reader setup done
 
 	config := Config{
 		ComputeWorkers: runtime.NumCPU() - 1,
@@ -136,7 +155,7 @@ func Test_parseAndTTest(t *testing.T) {
 		BufferSizeInGB: maxInt(1, int(memory.TotalMemory()/Giga)-10),
 	}
 
-	batchMeanAndVar, err := TTest(caseLog, simManyFilesReader, config)
+	batchMeanAndVar, err := TTest(simManyFilesReader, config)
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
 	}
