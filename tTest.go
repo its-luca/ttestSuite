@@ -3,14 +3,12 @@ package main
 //Parallelized Computation of Welch's T-test
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"path"
 	"sync"
 	"time"
+	"wfmParser/traceSource"
+	"wfmParser/wfm"
 )
 
 //channels/wait groups for communication
@@ -26,7 +24,7 @@ type workerContext struct {
 }
 
 //reads trace files [start,end[ and puts them to job chan
-func feederWorker(feederID, start, end, tracesPerFile int, traceSource TraceBlockReader, caseLog []int, wCtx workerContext) {
+func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockReader, wCtx workerContext) {
 	defer func() {
 		log.Printf("Feeder %v done\n", feederID)
 		wCtx.wg.Done()
@@ -56,20 +54,16 @@ func feederWorker(feederID, start, end, tracesPerFile int, traceSource TraceBloc
 				}
 				startTime := time.Now()
 				//read file
-				rawWFM, err := traceSource.GetBlock(traceBlockIDX)
+				rawWFM, caseLog, err := traceSource.GetBlock(traceBlockIDX)
 				if err != nil {
-					wCtx.errorChan <- fmt.Errorf("failed to read wfm file : %v", err)
+					wCtx.errorChan <- fmt.Errorf("failed get trace block/file with id %v : %v", traceBlockIDX, err)
 					wCtx.shouldQuit <- nil
 					return
 				}
-				//get case data for file
-				startIDX := traceBlockIDX * tracesPerFile
-				stopIDX := (traceBlockIDX + 1) * tracesPerFile
-				//log.Printf("traceBlockIDX %v startIDX %v stopIDX %v total len %v\n",traceBlockIDX,startIDX,stopIDX,len(caseLog))
 				flb := &FileLogBundle{
 					fileIDX:    traceBlockIDX,
 					file:       rawWFM,
-					subCaseLog: caseLog[startIDX:stopIDX],
+					subCaseLog: caseLog,
 				}
 				readTimeSinceLastTick += time.Since(startTime)
 				startTime = time.Now()
@@ -110,7 +104,7 @@ func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndV
 				//start := time.Now()
 				//log.Printf("Worker %v received job for fileIDX %v\n",workerID,workPackage.fileIDX)
 				//load data; fileIDX+1 to stick to previous naming convention
-				frames, err = wfmToTraces(workPackage.file, frames)
+				frames, err = wfm.WFMToTraces(workPackage.file, frames)
 				if err != nil {
 					wCtx.errorChan <- fmt.Errorf("worker %v : failed to parse wfm file : %v", workerID, err)
 					wCtx.shouldQuit <- nil
@@ -147,60 +141,16 @@ type FileLogBundle struct {
 	subCaseLog []int
 }
 
-//Interface for trace sources
-type TraceBlockReader interface {
-	//Total number of trace blocks
-	TotalBlockCount() int
-	//Reads the block identified by nr
-	GetBlock(nr int) ([]byte, error)
-}
-
-//Reads trace data from files with regular names
-type TraceFileReader struct {
-	totalFileCount int
-	folderPath     string
-	//map id to file name
-	idToFileName func(id int) string
-}
-
-//NewDefaultTraceFileReader, assumes "trace (x).wfm" with x in [1,totalFileCount] as the naming scheme
-func NewDefaultTraceFileReader(fileCount int, folderPath string) *TraceFileReader {
-	return &TraceFileReader{
-		totalFileCount: fileCount,
-		folderPath:     folderPath,
-		idToFileName: func(id int) string {
-			return fmt.Sprintf("trace (%v).wfm", id+1)
-		},
-	}
-}
-
-func (recv *TraceFileReader) TotalBlockCount() int {
-	return recv.totalFileCount
-}
-
-func (recv *TraceFileReader) GetBlock(nr int) ([]byte, error) {
-	//one test parse to get traces per file
-	fileContent, err := ioutil.ReadFile(path.Join(recv.folderPath, recv.idToFileName(nr)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read wfm file : %v", err)
-	}
-	return fileContent, nil
-}
-
 //TTest, is a parallelized implementation of Welch's T-test
-func TTest(caseLog []int, traceSource TraceBlockReader, config Config) (*BatchMeanAndVar, error) {
+func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanAndVar, error) {
 	numTraceFiles := traceSource.TotalBlockCount()
 
-	testFile, err := traceSource.GetBlock(0)
+	testFile, _, err := traceSource.GetBlock(0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read test file : %v", err)
 	}
-	testFrames, err := wfmToTraces(testFile, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse wfm file")
-	}
 
-	tracesPerFile := len(testFrames)
+	tracesPerFile := wfm.GetNumberOfTraces(testFile)
 	fmt.Printf("Traces per file: %v\n", tracesPerFile)
 
 	jobQueueLen := maxInt(1, (config.BufferSizeInGB*1024)/(len(testFile)/Mega))
@@ -252,7 +202,7 @@ func TTest(caseLog []int, traceSource TraceBlockReader, config Config) (*BatchMe
 		feederWorkerCtx.wg.Add(1)
 		startIDX := id * blockSize
 		endIDX := minInt(startIDX+blockSize, numTraceFiles)
-		go feederWorker(id, startIDX, endIDX, tracesPerFile, traceSource, caseLog, feederWorkerCtx)
+		go feederWorker(id, startIDX, endIDX, traceSource, feederWorkerCtx)
 	}
 
 	go func() {
@@ -291,31 +241,4 @@ func TTest(caseLog []int, traceSource TraceBlockReader, config Config) (*BatchMe
 	}
 
 	return combined, nil
-}
-
-//array with num traces entries. 1 stands for random case, 0 for fixed case
-func parseCaseLog(rawLog []byte) ([]int, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(rawLog))
-	scanner.Split(bufio.ScanLines)
-
-	caseLog := make([]int, 0)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		switch line {
-		case "1":
-			caseLog = append(caseLog, 1)
-			break
-		case "0":
-			caseLog = append(caseLog, 0)
-			break
-		default:
-			return nil, fmt.Errorf("unexpected entry %v in case log", line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error scanning for lines : %v\n", err)
-	}
-	return caseLog, nil
 }

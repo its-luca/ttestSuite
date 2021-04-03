@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/pbnjay/memory"
-	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path"
 	"runtime"
+	"time"
+	"wfmParser/httpReceiver"
+	"wfmParser/traceSource"
 )
 
 //Si unit prefix
@@ -25,11 +33,12 @@ type Config struct {
 
 func main() {
 	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing traces files (names trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
-	traceFileCount := flag.Int("traceFileCount", 0, "Number of trace files")
+	traceFileCount := flag.Int("traceFileCount", 0, "Number of trace files. Ignored in streaming setup")
 	pathCaseLogFile := flag.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line")
 	numWorkers := flag.Int("numWorkers", runtime.NumCPU()-1, "Number of threads to t-test computation (also note numFeeders). Influences CPU usage")
 	numFeeders := flag.Int("numFeeders", 1, "Number of threads for reading input files (in our lab reading a single file does not max out network connectivity). Influences I/O usage")
 	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
+	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability")
 
 	flag.Parse()
 
@@ -38,8 +47,8 @@ func main() {
 		flag.PrintDefaults()
 		return
 	}
-	if *traceFileCount == 0 {
-		fmt.Printf("Please set number of trace files\n")
+	if *traceFileCount <= 0 && *streamFromAddr == "" {
+		fmt.Printf("Please set number of trace files to a positive number\n")
 		flag.PrintDefaults()
 		return
 	}
@@ -82,18 +91,48 @@ func main() {
 		BufferSizeInGB: *fileBufferInGB,
 	}
 
-	rawCaseFile, err := ioutil.ReadFile(*pathCaseLogFile)
-	if err != nil {
-		log.Fatalf("Failed to read case file : %v\n", err)
-	}
-	caseLog, err := parseCaseLog(rawCaseFile)
-	if err != nil {
-		log.Fatalf("Failed to parse case file : %v\n", err)
+	var traceReader traceSource.TraceBlockReader
+	if *streamFromAddr == "" {
+		var err error
+		traceReader, err = traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, path.Base(*pathCaseLogFile))
+		if err != nil {
+			log.Fatalf("failed to create trace file reader : %v", err)
+		}
+	} else {
+		var filenameUpdates <-chan string
+
+		receiver := httpReceiver.NewReceiver()
+		srv := &http.Server{
+			Addr:    *streamFromAddr,
+			Handler: receiver.Routes(),
+		}
+		go func() {
+			log.Printf("Listening on %v", srv.Addr)
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("webserver crashed : %v\n", err)
+			}
+		}()
+		//note that the webserver is started concurretnly, else we could not receive the start message
+		receiverCtx, receiverCancel := context.WithCancel(context.Background())
+		shutdownRequest := make(chan os.Signal, 1)
+		signal.Notify(shutdownRequest, os.Interrupt)
+		go func() {
+			<-shutdownRequest
+			log.Printf("initiating shutdown")
+			receiverCancel()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				log.Printf("gracefull server shutdown failed : %v\n", err)
+			}
+		}()
+
+		*traceFileCount, filenameUpdates = receiver.WaitForMeasureStart(receiverCtx)
+
+		traceReader = traceSource.NewStreamingTraceFileReader(*traceFileCount, *pathTraceFolder, path.Base(*pathCaseLogFile), filenameUpdates)
 	}
 
-	traceFileReader := NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder)
-
-	batchMeanAndVar, err := TTest(caseLog, traceFileReader, config)
+	batchMeanAndVar, err := TTest(traceReader, config)
 	if err != nil {
 		log.Fatalf("Ttest failed : %v\n", err)
 	}
