@@ -121,16 +121,16 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 	}
 
 	//??
-	denom := make([]float64, bmv.datapointsPerTrace)
+	denominator := make([]float64, bmv.datapointsPerTrace)
 	for i := 0; i < bmv.datapointsPerTrace; i++ {
 		tmpFixed := pwVarFixed[i] / bmv.lenFixed
 		tmpRandom := pwVarRandom[i] / bmv.lenRandom
-		denom[i] = math.Sqrt(tmpFixed + tmpRandom)
+		denominator[i] = math.Sqrt(tmpFixed + tmpRandom)
 	}
 
 	tValues := make([]float64, bmv.datapointsPerTrace)
 	for i := 0; i < bmv.datapointsPerTrace; i++ {
-		tValues[i] = (pwMeanFixed[i] - pwMeanRandom[i]) / denom[i]
+		tValues[i] = (pwMeanFixed[i] - pwMeanRandom[i]) / denominator[i]
 	}
 
 	return tValues

@@ -14,7 +14,7 @@ import (
 func main() {
 
 	in := flag.String("in", "", "path to a csv file with t test values")
-	thresh := flag.Float64("tresh", 6, "Threshold value for plot")
+	thresh := flag.Float64("thresh", 6, "Threshold value for plot")
 
 	flag.Parse()
 

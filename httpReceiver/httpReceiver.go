@@ -27,12 +27,12 @@ type measureUpdateMsg struct {
 }
 
 //waits for a measureUpdateMsg and performs state switch to running measurement
-func (recv *receiver) handleMeasureStart(w http.ResponseWriter, r *http.Request) {
+func (rec *receiver) handleMeasureStart(w http.ResponseWriter, r *http.Request) {
 	log.Printf("handleMeasureStart handler called")
 
-	if recv.totalNumberOfTraceFiles != 0 {
+	if rec.totalNumberOfTraceFiles != 0 {
 		http.Error(w, fmt.Sprintf("Already received measure start message for %v trace files",
-			recv.totalNumberOfTraceFiles), http.StatusBadRequest)
+			rec.totalNumberOfTraceFiles), http.StatusBadRequest)
 		return
 	}
 
@@ -54,16 +54,16 @@ func (recv *receiver) handleMeasureStart(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Number of trace files must be > 0", http.StatusBadRequest)
 		return
 	}
-	recv.totalNumberOfTraceFiles = msg.TotalNumberOfTraceFiles
-	recv.receivedMeasureStart <- true
+	rec.totalNumberOfTraceFiles = msg.TotalNumberOfTraceFiles
+	rec.receivedMeasureStart <- true
 
 }
 
 //writes names of new measurement files to recv.newFileNames
-func (recv *receiver) handleMeasureUpdate(w http.ResponseWriter, r *http.Request) {
+func (rec *receiver) handleMeasureUpdate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("handleMeasureUpdate handler called")
 
-	if recv.totalNumberOfTraceFiles == 0 {
+	if rec.totalNumberOfTraceFiles == 0 {
 		http.Error(w, "Send a measure start message first", http.StatusBadRequest)
 		log.Printf("Discared early measure update message\n")
 		return
@@ -91,10 +91,10 @@ func (recv *receiver) handleMeasureUpdate(w http.ResponseWriter, r *http.Request
 		log.Printf("invalid file name %v", msg.FileName)
 		return
 	}
-	recv.newFileNames <- msg.FileName
-	recv.receivedTraceFiles++
-	if recv.receivedTraceFiles >= recv.totalNumberOfTraceFiles {
-		recv.doneReceiving <- nil
+	rec.newFileNames <- msg.FileName
+	rec.receivedTraceFiles++
+	if rec.receivedTraceFiles >= rec.totalNumberOfTraceFiles {
+		rec.doneReceiving <- nil
 	}
 }
 
@@ -133,55 +133,3 @@ func (rec *receiver) WaitForMeasureStart(ctx context.Context) (int, <-chan strin
 
 	return rec.totalNumberOfTraceFiles, rec.newFileNames
 }
-
-/*
-//Takes control over srv and adds measure start and measure update messages handlers.
-//Terminates the server once done
-//Returns total number of expected measurement files and a channel that is update with the incoming file names
-func newReceiverFromWebserver(ctx context.Context,srv Server) (int,<- chan string,error){
-	rec := receiver{
-		newFileNames:            make(chan string, 50),
-		doneReceiving:           make(chan interface{}),
-		startWg:                 sync.WaitGroup{},
-	}
-	//start webserver
-
-	srv.Handler = routes(rec)
-	rec.startWg.Add(1)
-	go func() {
-		//when the webserver finishes there will be no more new files
-		defer close(rec.newFileNames)
-		//only used by handleMeasureUpdate which cannot be called once webserver is closed
-		defer close(rec.doneReceiving)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err,http.ErrServerClosed) {
-			log.Printf("webserver crashed : %v\n",err)
-		}
-	}()
-	go func() {
-		//wait until context is cancelled or we received all files
-		select {
-		case  <- ctx.Done():
-		case <-rec.doneReceiving:
-		}
-		shutdownCtx, cancel:= context.WithDeadline(ctx, time.Now().Add(15*time.Second))
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Gracefull shutdown failed : %\n", err)
-		}
-	}()
-	//wait for start message
-	rec.startWg.Wait()
-
-
-	return rec.totalNumberOfTraceFiles,rec.newFileNames,nil
-}
-/*
-//Opens an http server on addr that handles measure start and measure update messages.
-//Returns total number of expected measurement files and a channel that is update with the incoming file names
-func NewReceiver(ctx context.Context,addr string) (int,<- chan string,error) {
-
-	srv := &http.Server{
-		Addr:    addr,
-	}
-	return newReceiverFromWebserver(ctx,srv)
-}*/

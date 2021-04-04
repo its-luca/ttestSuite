@@ -31,8 +31,8 @@ func GetNumberOfTraces(rawWFM []byte) int {
 	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4]))
 }
 
-//based on tectronix wfm spec, has basically zero error checks right now but seems to work
-func WFMToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
+//based on tektronix wfm spec, has basically zero error checks right now but seems to work
+func ParseTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 
 	numberOfTraces := GetNumberOfTraces(rawWFM)
 	//log.Printf("Number of fast frames is %v\n", numberOfTraces)
@@ -61,7 +61,7 @@ func WFMToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 	preChargeBytes := offsetDataStart
 	//log.Printf("postcharge length is %v\n",postChargeBytes)
 	//log.Printf("precharge length is %v\n",preChargeBytes)
-	//log.Printf("data start = %x post start = %x\n => expecting %vdatapoints",offsetDataStart,offsetPostStartOffset,(offsetPostStartOffset-offsetDataStart)/2)
+	//log.Printf("data start = %x post start = %x\n => expecting %v datapoints",offsetDataStart,offsetPostStartOffset,(offsetPostStartOffset-offsetDataStart)/2)
 
 	if frames == nil {
 		frames = make([][]float64, numberOfTraces)

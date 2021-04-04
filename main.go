@@ -44,7 +44,7 @@ func main() {
 	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
 	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability")
 	out := flag.String("out", "./t-values.csv", "Path t-test result file")
-	tTestTreshhold := flag.Float64("tTestTresh", 6, "Threshold value for t test plot")
+	tTestThreshold := flag.Float64("tTestThresh", 6, "Threshold value for t test plot")
 
 	flag.Parse()
 
@@ -118,7 +118,7 @@ func main() {
 				log.Printf("webserver crashed : %v\n", err)
 			}
 		}()
-		//note that the webserver is started concurretnly, else we could not receive the start message
+		//note that the webserver is started concurrently, else we could not receive the start message
 		receiverCtx, receiverCancel := context.WithCancel(context.Background())
 		shutdownRequest := make(chan os.Signal, 1)
 		signal.Notify(shutdownRequest, os.Interrupt)
@@ -221,7 +221,7 @@ func main() {
 		}
 	}()
 
-	if err := tPlot.PlotAndStore(tValues, *tTestTreshhold, plotFile); err != nil {
+	if err := tPlot.PlotAndStore(tValues, *tTestThreshold, plotFile); err != nil {
 		fmt.Printf("Failed to save plot :%v", err)
 		return
 	}
