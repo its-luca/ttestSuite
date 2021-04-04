@@ -19,6 +19,7 @@ import (
 	"ttestSuite/httpReceiver"
 	"ttestSuite/tPlot"
 	"ttestSuite/traceSource"
+	"ttestSuite/wfm"
 )
 
 //Si unit prefix
@@ -138,7 +139,7 @@ func main() {
 		traceReader = traceSource.NewStreamingTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*pathCaseLogFile), filenameUpdates)
 	}
 
-	batchMeanAndVar, err := TTest(traceReader, config)
+	batchMeanAndVar, err := TTest(traceReader, wfm.Parser{}, config)
 	if err != nil {
 		log.Fatalf("Ttest failed : %v\n", err)
 	}

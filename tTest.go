@@ -8,19 +8,23 @@ import (
 	"sync"
 	"time"
 	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
 )
 
 //channels/wait groups for communication
 type workerContext struct {
 	//feeders write, compute workers read; close once both of them are done
 	jobs chan *FileLogBundle
-	//writeable by feeders and compute workers; indicate error has happened and others should shut down
-	shouldQuit chan interface{}
-	//send error information; does not lead to shutdown unless you write to shouldQuit
+	//closing this indicates to the workers that they should quit
+	shouldQuit <-chan interface{}
+	//send error information
 	errorChan chan error
 	//count of active workers
 	wg *sync.WaitGroup
+}
+
+type TraceParser interface {
+	ParseTraces([]byte, [][]float64) ([][]float64, error)
+	GetNumberOfTraces([]byte) int
 }
 
 //reads trace files [start,end[ and puts them to job chan
@@ -58,7 +62,6 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 				rawWFM, caseLog, err := traceSource.GetBlock(traceBlockIDX)
 				if err != nil {
 					wCtx.errorChan <- fmt.Errorf("failed get trace block/file with id %v : %v", traceBlockIDX, err)
-					wCtx.shouldQuit <- nil
 					return
 				}
 				flb := &FileLogBundle{
@@ -78,7 +81,7 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 }
 
 //consumes wCtx.jobs and writes result to resultChan once in the end
-func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndVar, wCtx workerContext) {
+func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndVar, traceParser TraceParser, wCtx workerContext) {
 	defer func() {
 		log.Printf("Worker %v done\n", workerID)
 		wCtx.wg.Done()
@@ -102,13 +105,9 @@ func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndV
 					resultChan <- batchMeAndAndVar
 					return
 				}
-				//start := time.Now()
-				//log.Printf("Worker %v received job for fileIDX %v\n",workerID,workPackage.fileIDX)
-				//load data; fileIDX+1 to stick to previous naming convention
-				frames, err = wfm.ParseTraces(workPackage.file, frames)
+				frames, err = traceParser.ParseTraces(workPackage.file, frames)
 				if err != nil {
 					wCtx.errorChan <- fmt.Errorf("worker %v : failed to parse wfm file : %v", workerID, err)
-					wCtx.shouldQuit <- nil
 					return
 				}
 
@@ -143,7 +142,7 @@ type FileLogBundle struct {
 }
 
 //TTest, is a parallelized implementation of Welch's T-test
-func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanAndVar, error) {
+func TTest(traceSource traceSource.TraceBlockReader, traceParser TraceParser, config Config) (*BatchMeanAndVar, error) {
 	numTraceFiles := traceSource.TotalBlockCount()
 
 	testFile, _, err := traceSource.GetBlock(0)
@@ -151,13 +150,19 @@ func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanA
 		return nil, fmt.Errorf("failed to read test file : %v", err)
 	}
 
-	tracesPerFile := wfm.GetNumberOfTraces(testFile)
+	tracesPerFile := traceParser.GetNumberOfTraces(testFile)
 	fmt.Printf("Traces per file: %v\n", tracesPerFile)
 
-	jobQueueLen := maxInt(1, (config.BufferSizeInGB*1024)/(len(testFile)/Mega))
+	scaleDenom := len(testFile) / Mega
+	jobQueueLen := 1
+	//== null can happen for small test files
+	if scaleDenom != 0 {
+		jobQueueLen = maxInt(1, (config.BufferSizeInGB*1024)/(len(testFile)/Mega))
+	}
 	log.Printf("jobQueueLen %v (buff\n", jobQueueLen)
 	jobs := make(chan *FileLogBundle, jobQueueLen)
 	errorChan := make(chan error)
+	//if closed, all listening routines should terminate.
 	shouldQuit := make(chan interface{})
 	resultChan := make(chan *BatchMeanAndVar, config.ComputeWorkers)
 	var computeWorkerWg, feederWorkerWg sync.WaitGroup
@@ -194,7 +199,7 @@ func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanA
 	//create ComputeWorkers
 	for id := 0; id < config.ComputeWorkers; id++ {
 		computeWorkerCtx.wg.Add(1)
-		go computeWorker(id, tracesPerFile, resultChan, computeWorkerCtx)
+		go computeWorker(id, tracesPerFile, resultChan, traceParser, computeWorkerCtx)
 	}
 
 	//create feeders
@@ -206,9 +211,17 @@ func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanA
 		go feederWorker(id, startIDX, endIDX, traceSource, feederWorkerCtx)
 	}
 
+	//stores the first error send over errorChan
+	var backgroundError error
 	go func() {
+		signaledShutdown := false
 		for recError := range errorChan {
 			log.Printf("Received error : %v", recError)
+			backgroundError = recError
+			if !signaledShutdown {
+				close(shouldQuit)
+				signaledShutdown = true
+			}
 		}
 	}()
 
@@ -219,23 +232,31 @@ func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanA
 	log.Printf("closed jobs channel, waiting wor compute workers to finish\n")
 	//wait for compute workers to finish outstanding jobs
 	computeWorkerCtx.wg.Wait()
-	shouldQuit <- nil
 	log.Printf("compute workers finished\n")
 	//all workers done, no one can send errors anymore
 	close(errorChan)
+	//all workers are done, no one can send results anymore
+	close(resultChan)
+
+	if backgroundError != nil {
+		return nil, backgroundError
+	}
 
 	log.Printf("Merging results\n")
 	var combined *BatchMeanAndVar
 	//Relies on resultChan having at least a buffer of ComputeWorkers
-	for i := 0; i < config.ComputeWorkers; i++ {
-		//nil happens when there are less files than ComputeWorkers
+	resultCount := 0
+	for partialResult := range resultChan {
 		if combined == nil {
-			combined = <-resultChan
+			combined = partialResult
 		} else {
-			combined.MergeBatchMeanAndVar(<-resultChan)
+			combined.MergeBatchMeanAndVar(partialResult)
 		}
+		resultCount++
 	}
-	close(resultChan)
+	if resultCount != config.ComputeWorkers {
+		return nil, fmt.Errorf("did only get %v partial results but expected %v", resultCount, config.ComputeWorkers)
+	}
 
 	if combined == nil {
 		return nil, fmt.Errorf("no results from workers")
