@@ -13,13 +13,13 @@ import (
 
 func main() {
 
-	in := flag.String("in", "", "path to a csv file with t test values")
+	in := flag.String("in", "", "Path to a csv file with t-test results as floats")
 	thresh := flag.Float64("thresh", 6, "Threshold value for plot")
 
 	flag.Parse()
 
 	if *in == "" {
-		fmt.Printf("Please \"in\" parameter\n")
+		fmt.Printf("Please set \"in\" parameter!\n")
 		flag.PrintDefaults()
 		return
 	}

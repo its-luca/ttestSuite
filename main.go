@@ -36,42 +36,42 @@ type Config struct {
 }
 
 func main() {
-	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing traces files (names trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
+	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing wfm trace files (expected naming scheme is trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
 	traceFileCount := flag.Int("traceFileCount", 0, "Number of trace files. Ignored in streaming setup")
-	pathCaseLogFile := flag.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line")
-	numWorkers := flag.Int("numWorkers", runtime.NumCPU()-1, "Number of threads to t-test computation (also note numFeeders). Influences CPU usage")
+	pathCaseLogFile := flag.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line)")
+	numWorkers := flag.Int("numWorkers", runtime.NumCPU()-1, "Number of threads to do the t-test computation (also note numFeeders). Influences CPU usage")
 	numFeeders := flag.Int("numFeeders", 1, "Number of threads for reading input files (in our lab reading a single file does not max out network connectivity). Influences I/O usage")
 	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
-	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability")
-	out := flag.String("out", "./t-values.csv", "Path t-test result file")
-	tTestThreshold := flag.Float64("tTestThresh", 6, "Threshold value for t test plot")
+	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability. Files are still read from disk!")
+	out := flag.String("out", "./t-values.csv", "Path for t-test result file")
+	tTestThreshold := flag.Float64("tTestThresh", 6, "Threshold value for t-test plot")
 
 	flag.Parse()
 
 	if *pathTraceFolder == "" {
-		fmt.Printf("Please set path to trace folder\n")
+		fmt.Printf("Please set path to trace folder!\n")
 		flag.PrintDefaults()
 		return
 	}
 	if *traceFileCount <= 0 && *streamFromAddr == "" {
-		fmt.Printf("Please set number of trace files to a positive number\n")
+		fmt.Printf("Please set number of trace files to a positive number!\n")
 		flag.PrintDefaults()
 		return
 	}
 
 	if *pathCaseLogFile == "" {
-		fmt.Printf("Please set path to case log file\n")
+		fmt.Printf("Please set path to case log file!\n")
 		flag.PrintDefaults()
 		return
 	}
 
 	if *numWorkers < 0 {
-		fmt.Printf("Please set numWorkers to a numer in [1,%v[\n", runtime.NumCPU()-1)
+		fmt.Printf("Please set numWorkers to a number in [1,%v[!\n", runtime.NumCPU()-1)
 		flag.PrintDefaults()
 		return
 	}
 	if *numWorkers > runtime.NumCPU()-1 {
-		fmt.Printf("numWorkers is set to %v but (considering the feeder thread) you only have %v vcores left. This will add threading overhead\n", *numWorkers, runtime.NumCPU()-1)
+		fmt.Printf("numWorkers is set to %v but (considering the feeder thread) you only have %v vcores left. This will add threading overhead!\n", *numWorkers, runtime.NumCPU()-1)
 	}
 
 	if *numFeeders < 1 {
@@ -81,12 +81,12 @@ func main() {
 	}
 
 	if *fileBufferInGB < 1 {
-		fmt.Printf("Your file buffer is too small")
+		fmt.Printf("File buffer neeeds to be at least one GB!\n")
 		flag.PrintDefaults()
 		return
 	}
 	if *fileBufferInGB > int(memory.TotalMemory()/Giga) {
-		fmt.Printf("Your file buffer is large than the available memory!")
+		fmt.Printf("Your file buffer is larger than the available memory!")
 		flag.PrintDefaults()
 		return
 	}
@@ -102,7 +102,7 @@ func main() {
 		var err error
 		traceReader, err = traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*pathCaseLogFile))
 		if err != nil {
-			log.Fatalf("failed to create trace file reader : %v", err)
+			log.Fatalf("Failed to create trace file reader : %v", err)
 		}
 	} else {
 		var filenameUpdates <-chan string
@@ -124,7 +124,7 @@ func main() {
 		signal.Notify(shutdownRequest, os.Interrupt)
 		go func() {
 			<-shutdownRequest
-			log.Printf("initiating shutdown")
+			log.Printf("initiating shutdown...")
 			receiverCancel()
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer shutdownCancel()
