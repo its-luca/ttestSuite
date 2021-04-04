@@ -16,9 +16,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"wfmParser/httpReceiver"
-	"wfmParser/tPlot"
-	"wfmParser/traceSource"
+	"ttestSuite/httpReceiver"
+	"ttestSuite/tPlot"
+	"ttestSuite/traceSource"
 )
 
 //Si unit prefix

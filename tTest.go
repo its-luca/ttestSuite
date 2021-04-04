@@ -7,8 +7,8 @@ import (
 	"log"
 	"sync"
 	"time"
-	"wfmParser/traceSource"
-	"wfmParser/wfm"
+	"ttestSuite/traceSource"
+	"ttestSuite/wfm"
 )
 
 //channels/wait groups for communication

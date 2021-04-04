@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"wfmParser/traceSource"
-	"wfmParser/wfm"
+	"ttestSuite/traceSource"
+	"ttestSuite/wfm"
 )
 
 func parseCSVToFloat64(csvData []byte) ([][]float64, error) {

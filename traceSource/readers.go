@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
-	"wfmParser/wfm"
+	"ttestSuite/wfm"
 )
 
 //array with num traces entries. 1 stands for random case, 0 for fixed case
