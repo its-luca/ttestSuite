@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"wfmParser/tPlot"
+	"ttestSuite/tPlot"
 )
 
 func main() {

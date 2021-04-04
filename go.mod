@@ -1,4 +1,4 @@
-module wfmParser
+module ttestSuite
 
 go 1.15
 
