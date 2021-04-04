@@ -62,7 +62,7 @@ func Test_wfmToTraces(t *testing.T) {
 	}
 
 	//call function that we want to test
-	frames, err := wfm.WFMToTraces(rawWFM, nil)
+	frames, err := wfm.ParseTraces(rawWFM, nil)
 	if err != nil {
 		t.Fatalf("unexpected Error %v\n", err)
 	}

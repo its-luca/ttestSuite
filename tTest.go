@@ -105,7 +105,7 @@ func computeWorker(workerID, tracesPerFile int, resultChan chan<- *BatchMeanAndV
 				//start := time.Now()
 				//log.Printf("Worker %v received job for fileIDX %v\n",workerID,workPackage.fileIDX)
 				//load data; fileIDX+1 to stick to previous naming convention
-				frames, err = wfm.WFMToTraces(workPackage.file, frames)
+				frames, err = wfm.ParseTraces(workPackage.file, frames)
 				if err != nil {
 					wCtx.errorChan <- fmt.Errorf("worker %v : failed to parse wfm file : %v", workerID, err)
 					wCtx.shouldQuit <- nil
