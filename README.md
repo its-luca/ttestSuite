@@ -1,3 +1,5 @@
+[![Go](https://github.com/its-luca/ttestSuite/actions/workflows/go.yml/badge.svg)](https://github.com/its-luca/ttestSuite/actions/workflows/go.yml)
+
 # ttestSuite
 ttestSuite is a multithreaded implementation of Welch's T-test in go.
 It reads the data from wfm files and saves the result as a csv file and also creates a plot.
