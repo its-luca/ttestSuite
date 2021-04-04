@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"wfmParser/httpReceiver"
+	"wfmParser/tPlot"
 	"wfmParser/traceSource"
 )
 
@@ -43,6 +44,7 @@ func main() {
 	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
 	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability")
 	out := flag.String("out", "./t-values.csv", "Path t-test result file")
+	tTestTreshhold := flag.Float64("tTestTresh", 6, "Threshold value for t test plot")
 
 	flag.Parse()
 
@@ -179,12 +181,16 @@ func main() {
 
 	*out = filepath.Join(outPath, nameCandidate)
 	outFile, err := os.Create(filepath.Join(outPath, nameCandidate))
-	defer outFile.Close()
 	if err != nil {
 		log.Printf("%v\n", err)
 		fmt.Printf("Failed to write to %v, dumping data to console instead\nlength=%v\n%v\n", *out, len(tValues), tValues)
 		return
 	}
+	defer func() {
+		if err := outFile.Close(); err != nil {
+			log.Printf("Failed to close %v : %v", outFile.Name(), err)
+		}
+	}()
 
 	tValuesAsStrings := make([]string, len(tValues))
 	for i := range tValues {
@@ -198,6 +204,25 @@ func main() {
 	csvWriter.Flush()
 	if err := csvWriter.Error(); err != nil {
 		fmt.Printf("Failed to flush to outputfile %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(tValues), tValues)
+		return
+	}
+
+	//create plot
+	plotPath := filepath.Join(outPath, strings.Split(nameCandidate, ".")[0]+"-plot.png")
+	fmt.Printf("Storing plot in %v\n", plotPath)
+	plotFile, err := os.Create(plotPath)
+	if err != nil {
+		fmt.Printf("Failed to create plot file : %v\n", err)
+		return
+	}
+	defer func() {
+		if err := plotFile.Close(); err != nil {
+			log.Printf("Failed to close %v : %v", plotFile.Name(), err)
+		}
+	}()
+
+	if err := tPlot.PlotAndStore(tValues, *tTestTreshhold, plotFile); err != nil {
+		fmt.Printf("Failed to save plot :%v", err)
 		return
 	}
 

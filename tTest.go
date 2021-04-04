@@ -31,7 +31,7 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 	}()
 	log.Printf("Feeder %v started on range [%v,%v[\n", feederID, start, end)
 	traceBlockIDX := start
-	metricsTicker := time.NewTicker(1 * time.Second)
+	metricsTicker := time.NewTicker(5 * time.Second)
 	processedElements := 0
 	readTimeSinceLastTick := 0 * time.Second
 	enqueueWaitSinceLastTick := 0 * time.Second
@@ -41,8 +41,9 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 			log.Printf("Feeder quits because there was an error")
 			return
 		case <-metricsTicker.C:
-			log.Printf("Feeder %v:\t avg read time %v\t avg enq wait %v\n", feederID,
-				readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements))
+			log.Printf("Feeder %v:\t avg read time %v\t avg enq wait %v\t progress %v/%v\n", feederID,
+				readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements),
+				traceBlockIDX-start, end-start)
 			processedElements = 0
 			readTimeSinceLastTick = 0
 			enqueueWaitSinceLastTick = 0
@@ -162,7 +163,7 @@ func TTest(traceSource traceSource.TraceBlockReader, config Config) (*BatchMeanA
 	var computeWorkerWg, feederWorkerWg sync.WaitGroup
 
 	//stats ticker
-	statsTicker := time.NewTicker(1 * time.Second)
+	statsTicker := time.NewTicker(5 * time.Second)
 	go func() {
 		for {
 			select {

@@ -5,7 +5,6 @@ package wfm
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math"
 )
 
@@ -36,10 +35,10 @@ func GetNumberOfTraces(rawWFM []byte) int {
 func WFMToTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 
 	numberOfTraces := GetNumberOfTraces(rawWFM)
-	log.Printf("Number of fast frames is %v\n", numberOfTraces)
+	//log.Printf("Number of fast frames is %v\n", numberOfTraces)
 
 	datapointsPerFF := int(binary.LittleEndian.Uint32(rawWFM[offsetHorizontalDimSize4BUint : offsetHorizontalDimSize4BUint+4]))
-	log.Printf("Datapoints per fast frame is  %v\n", datapointsPerFF)
+	//log.Printf("Datapoints per fast frame is  %v\n", datapointsPerFF)
 
 	formatIdentifier := int(binary.LittleEndian.Uint32(rawWFM[offsetOfFormat4BInt : offsetOfFormat4BInt+4]))
 	if formatIdentifier != 0 {
