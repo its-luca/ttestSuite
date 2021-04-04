@@ -27,6 +27,17 @@ const (
 	offsetOfOffsetPostchargeStop  = 0x33e
 )
 
+//Adapter to the TraceParser interface
+type Parser struct{}
+
+func (p Parser) GetNumberOfTraces(bytes []byte) int {
+	return GetNumberOfTraces(bytes)
+}
+
+func (p Parser) ParseTraces(raw []byte, frames [][]float64) ([][]float64, error) {
+	return ParseTraces(raw, frames)
+}
+
 func GetNumberOfTraces(rawWFM []byte) int {
 	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4]))
 }

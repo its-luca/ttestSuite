@@ -155,7 +155,7 @@ func Test_parseAndTTest(t *testing.T) {
 		BufferSizeInGB: maxInt(1, int(memory.TotalMemory()/Giga)-10),
 	}
 
-	batchMeanAndVar, err := TTest(simManyFilesReader, config)
+	batchMeanAndVar, err := TTest(simManyFilesReader, wfm.Parser{}, config)
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
 	}
