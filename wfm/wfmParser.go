@@ -25,12 +25,13 @@ const (
 	//offsetOfNValue4B              = 0x0f8
 	offsetOfOffsetPostchargeStart = 0x33a
 	offsetOfOffsetPostchargeStop  = 0x33e
+	offsetSetType                 = 0x04e
 )
 
 //Adapter to the TraceParser interface
 type Parser struct{}
 
-func (p Parser) GetNumberOfTraces(bytes []byte) int {
+func (p Parser) GetNumberOfTraces(bytes []byte) (int, error) {
 	return GetNumberOfTraces(bytes)
 }
 
@@ -38,14 +39,21 @@ func (p Parser) ParseTraces(raw []byte, frames [][]float64) ([][]float64, error)
 	return ParseTraces(raw, frames)
 }
 
-func GetNumberOfTraces(rawWFM []byte) int {
-	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint : offsetOfNumberOfFF4BUint+4]))
+func GetNumberOfTraces(rawWFM []byte) (int, error) {
+	if binary.LittleEndian.Uint32(rawWFM[offsetSetType:offsetSetType+4]) != uint32(1) {
+		return 0, fmt.Errorf("not a fastframe file")
+	}
+	//according to wfm spec +1 gives the number of frames
+	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint:offsetOfNumberOfFF4BUint+4])) + 1, nil
 }
 
 //based on tektronix wfm spec, has basically zero error checks right now but seems to work
 func ParseTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 
-	numberOfTraces := GetNumberOfTraces(rawWFM)
+	numberOfTraces, err := GetNumberOfTraces(rawWFM)
+	if err != nil {
+		return nil, err
+	}
 	//log.Printf("Number of fast frames is %v\n", numberOfTraces)
 
 	datapointsPerFF := int(binary.LittleEndian.Uint32(rawWFM[offsetHorizontalDimSize4BUint : offsetHorizontalDimSize4BUint+4]))

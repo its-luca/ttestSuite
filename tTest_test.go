@@ -31,8 +31,8 @@ func (m mockTraceParser) ParseTraces(_ []byte, _ [][]float64) ([][]float64, erro
 	return m.frames, nil
 }
 
-func (m mockTraceParser) GetNumberOfTraces(_ []byte) int {
-	return len(m.frames)
+func (m mockTraceParser) GetNumberOfTraces(_ []byte) (int, error) {
+	return len(m.frames), nil
 }
 
 func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
