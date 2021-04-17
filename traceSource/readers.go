@@ -26,7 +26,7 @@ func ParseCaseLog(rawLog []byte) ([]int, error) {
 			caseLog = append(caseLog, 0)
 			break
 		default:
-			return nil, fmt.Errorf("unexpected entry %v in case log", line)
+			return nil, fmt.Errorf("unexpected entry %v in case log line %v", line, len(caseLog))
 		}
 	}
 
@@ -75,7 +75,10 @@ func NewDefaultTraceFileReader(fileCount int, folderPath, caseFileName string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse case log file : %v", err)
 	}
-	tfr.tracesPerFile = wfm.GetNumberOfTraces(rawFile)
+	tfr.tracesPerFile, err = wfm.GetNumberOfTraces(rawFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse case log file : %v", err)
+	}
 	tfr.caseLog = caseLog
 	return tfr, nil
 }
@@ -159,7 +162,10 @@ func (recv *StreamingTraceFileReader) GetBlock(nr int) ([]byte, []int, error) {
 		return nil, nil, fmt.Errorf("failed to read wfm file : %v", err)
 	}
 	if recv.tracesPerFile == 0 {
-		recv.tracesPerFile = wfm.GetNumberOfTraces(fileContent)
+		recv.tracesPerFile, err = wfm.GetNumberOfTraces(fileContent)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse file : %v", err)
+		}
 	}
 	startIDX := nr * recv.tracesPerFile
 	stopIDX := (nr + 1) * recv.tracesPerFile

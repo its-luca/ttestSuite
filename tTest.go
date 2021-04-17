@@ -24,7 +24,7 @@ type workerContext struct {
 
 type TraceParser interface {
 	ParseTraces([]byte, [][]float64) ([][]float64, error)
-	GetNumberOfTraces([]byte) int
+	GetNumberOfTraces([]byte) (int, error)
 }
 
 //reads trace files [start,end[ and puts them to job chan
@@ -150,7 +150,10 @@ func TTest(traceSource traceSource.TraceBlockReader, traceParser TraceParser, co
 		return nil, fmt.Errorf("failed to read test file : %v", err)
 	}
 
-	tracesPerFile := traceParser.GetNumberOfTraces(testFile)
+	tracesPerFile, err := traceParser.GetNumberOfTraces(testFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine traces per file : %v", err)
+	}
 	fmt.Printf("Traces per file: %v\n", tracesPerFile)
 
 	scaleDenom := len(testFile) / Mega

@@ -50,10 +50,10 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 		for i := 0; i < wantTotalFileCount; i++ {
 			//append new case data
 			if _, err := io.Copy(testCaseFile, bytes.NewReader(rawCaseFile)); err != nil {
-				t.Fatalf("Failed to append new test case file content : %v\n", err)
+				t.Errorf("Failed to append new test case file content : %v\n", err)
 			}
 			if err := testCaseFile.Sync(); err != nil {
-				t.Fatalf("Failed to flush testCaseFile content :%v\n", err)
+				t.Errorf("Failed to flush testCaseFile content :%v\n", err)
 			}
 			//send new file name
 			newFiles <- traceFileName
@@ -81,7 +81,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 			}
 		}
 		if wantLen, gotLen := len(wantCaseData), len(gotCaseData); wantLen != gotLen {
-			t.Errorf("trace file %v want %v bytes, got %v bytes\n", nr, wantLen, gotLen)
+			t.Errorf("trace file %v want %v case entries , got %v case entries\n", nr, wantLen, gotLen)
 		}
 		for i := range wantCaseData {
 			if wantCaseData[i] != gotCaseData[i] {
