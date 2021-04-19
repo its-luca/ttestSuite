@@ -3,11 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
-	"github.com/pbnjay/memory"
 	"io/ioutil"
 	"math"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -135,7 +134,7 @@ func Test_parseAndTTest(t *testing.T) {
 	}
 
 	simManyFilesReader := &mockManyFileSimTraceFileReader{
-		totalFileCount: 32,
+		totalFileCount: 5,
 		file:           rawTraceFile,
 		caseLog:        caseLog,
 	}
@@ -150,17 +149,26 @@ func Test_parseAndTTest(t *testing.T) {
 	//hacky file reader setup done
 
 	config := Config{
-		ComputeWorkers: runtime.NumCPU() - 1,
-		FeederWorkers:  1,
-		BufferSizeInGB: maxInt(1, int(memory.TotalMemory()/Giga)-10),
+		ComputeWorkers:   3,
+		FeederWorkers:    1,
+		BufferSizeInGB:   1,
+		SnapshotInterval: 1,
 	}
 
-	batchMeanAndVar, err := TTest(simManyFilesReader, wfm.Parser{}, config)
+	creator, err := GetWorkerPayloadCreator("ttest")
+	if err != nil {
+		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
+	}
+
+	batchMeanAndVar, err := TTest(context.Background(), simManyFilesReader, wfm.Parser{}, creator, func(payload WorkerPayload) error { return nil }, config)
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
 	}
 
-	gotTValues := batchMeanAndVar.ComputeLQ()
+	gotTValues, err := batchMeanAndVar.Finalize()
+	if err != nil {
+		t.Fatalf("unexpected error finalizing payload computation : %v\n", err)
+	}
 
 	if gotLen, wantLen := len(gotTValues), len(wanTValues); gotLen != wantLen {
 		t.Errorf("wanted %v values got %v valuesan", wantLen, gotLen)

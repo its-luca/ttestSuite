@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+	"ttestSuite/mocks"
 )
 
 type mockFailingTraceReader struct {
@@ -47,9 +49,15 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	}
 
 	config := Config{
-		ComputeWorkers: 2,
-		FeederWorkers:  1,
-		BufferSizeInGB: 1,
+		ComputeWorkers:   2,
+		FeederWorkers:    1,
+		BufferSizeInGB:   1,
+		SnapshotInterval: 1,
+	}
+
+	creator, err := GetWorkerPayloadCreator("ttest")
+	if err != nil {
+		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
 
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -57,7 +65,7 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	defer testCancel()
 	var tTestErr error
 	go func() {
-		_, tTestErr = TTest(mockSource, mockParser, config)
+		_, tTestErr = TTest(context.Background(), mockSource, mockParser, creator, func(payload WorkerPayload) error { return nil }, config)
 		done <- nil
 	}()
 
@@ -70,4 +78,178 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 		}
 
 	}
+}
+
+type mockTest struct {
+	sum float64
+}
+
+func (m *mockTest) Update(fixed, random [][]float64) {
+	for _, innerSlice := range fixed {
+		for _, v := range innerSlice {
+			m.sum += v
+		}
+	}
+	for _, innerSlice := range random {
+		for _, v := range innerSlice {
+			m.sum += v
+		}
+	}
+}
+
+func (m *mockTest) Finalize() ([]float64, error) {
+	return []float64{m.sum}, nil
+}
+
+func (m *mockTest) Merge(payload WorkerPayload) error {
+	asMockTest, ok := payload.(*mockTest)
+	if !ok {
+		return fmt.Errorf("tried to merge mock test with other type")
+	}
+	m.sum += asMockTest.sum
+	return nil
+}
+
+func (m *mockTest) DeepCopy() WorkerPayload {
+	return &mockTest{sum: m.sum}
+}
+
+func (m *mockTest) Name() string {
+	return "mockTest"
+}
+
+func createMockTest(_ int) WorkerPayload {
+	return &mockTest{sum: 0}
+}
+
+//Failes, problen: the worker who sends the snapshot does necessarily have the complete history from file
+//0 to the snapshot point. Thus we get only some delta. Even worse, currently we cannot predict which files are
+//in that delta
+func TestTTest_SnapshotValues(t *testing.T) {
+	blocks := [][][]float64{
+		{[]float64{1, 1, 1, 1}},
+		{[]float64{1, 1, 0, 0}},
+		{[]float64{0, 0, 0, 0}},
+		{[]float64{1, 1, 1, 1}},
+		{[]float64{1, 1, 1, 1}},
+		{[]float64{1, 1, 0, 0}},
+		{[]float64{0, 0, 0, 0}},
+		{[]float64{1, 1, 1, 1}},
+	}
+
+	//just to fulfil interface, does not matter for our mock function
+	caseDataPerBlock := [][]int{
+		{0},
+		{0},
+		{0},
+		{0},
+		{0},
+		{0},
+		{0},
+		{0},
+	}
+
+	blockSource, parser := mocks.CreateFloatSourceParserPair(blocks, caseDataPerBlock, -1)
+
+	type testInput struct {
+		wantSnapshotValues [][]float64
+		wantFinal          float64
+		intervalSize       int
+		wantErr            error
+	}
+	inputs := []testInput{
+		{
+			wantSnapshotValues: [][]float64{
+				{4},
+				{6},
+				{6},
+				{10},
+				{14},
+				{16},
+				{16},
+				{20},
+			},
+			wantFinal:    20.0,
+			intervalSize: 1,
+		},
+		{
+			wantSnapshotValues: [][]float64{
+				{6},
+				{10},
+				{16},
+				{20},
+			},
+			wantFinal:    20.0,
+			intervalSize: 2,
+		},
+		{
+			wantSnapshotValues: [][]float64{
+				{20},
+			},
+			wantFinal:    20.0,
+			intervalSize: 8,
+		},
+
+		{
+			wantSnapshotValues: [][]float64{},
+			wantFinal:          20.0,
+			intervalSize:       9,
+			wantErr:            ErrInvSnapInterval, //because interval is large than trace file count
+		},
+	}
+
+	//to check for racy behaviour we process the test inputs multiple times
+	for repetition := 0; repetition < 50; repetition++ {
+		//try each input with different worker counts to detect racy behaviour
+		for workerCount := 1; workerCount < 8; workerCount++ {
+			for _, v := range inputs {
+				config := Config{
+					ComputeWorkers:   workerCount,
+					FeederWorkers:    1,
+					BufferSizeInGB:   1,
+					SnapshotInterval: v.intervalSize,
+				}
+
+				gotSnapshotData := make([]WorkerPayload, 0)
+				snapshotSaver := func(s WorkerPayload) error {
+					gotSnapshotData = append(gotSnapshotData, s)
+					return nil
+				}
+
+				gotFinalValue, tTestErr := TTest(context.Background(), blockSource, parser, createMockTest, snapshotSaver, config)
+				if tTestErr != nil {
+					//if we wanted this error we can accept the test at this point
+					if v.wantErr != nil && errors.Is(tTestErr, v.wantErr) {
+						continue
+					}
+					t.Fatalf("Unepxected error : %v\n", tTestErr)
+				}
+
+				if wantSnaps, gotSnaps := len(v.wantSnapshotValues), len(gotSnapshotData); wantSnaps != gotSnaps {
+					t.Errorf("wanted %v snapshots got %v\n", wantSnaps, gotSnaps)
+				}
+
+				for i := range v.wantSnapshotValues {
+					gotSnapResult, err := gotSnapshotData[i].Finalize()
+					if err != nil {
+						t.Fatalf("Unexpected error finalizing snapshot data at index %v : %v\n", i, err)
+					}
+					if gotSnapResult[0] != v.wantSnapshotValues[i][0] {
+						t.Errorf("snapshot %v: want %v got %v\n", i, v.wantSnapshotValues[i][0], gotSnapResult[0])
+					}
+				}
+
+				gotFinal, err := gotFinalValue.Finalize()
+				if err != nil {
+					t.Fatalf("unexpected error finalizing result : %v\n", err)
+				}
+
+				if gotFinal[0] != v.wantFinal {
+					t.Errorf("want final %v got %v\n", v.wantFinal, gotFinal[0])
+				}
+			}
+		}
+
+	}
+
 }

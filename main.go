@@ -34,15 +34,20 @@ type Config struct {
 	FeederWorkers int
 	//controls buffer (unit trace files) available to FeederWorkers; increase to fill RAM for max performance
 	BufferSizeInGB int
+	//Amount of files after which a snapshot is created
+	SnapshotInterval int
 }
 
 func main() {
+
+	//Handle command line options
+
 	pathTraceFolder := flag.String("traceFolder", "", "Path to folder containing wfm trace files (expected naming scheme is trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
 	traceFileCount := flag.Int("traceFileCount", 0, "Number of trace files. Ignored in streaming setup")
 	pathCaseLogFile := flag.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line)")
 	numWorkers := flag.Int("numWorkers", runtime.NumCPU()-1, "Number of threads to do the t-test computation (also note numFeeders). Influences CPU usage")
 	numFeeders := flag.Int("numFeeders", 1, "Number of threads for reading input files (in our lab reading a single file does not max out network connectivity). Influences I/O usage")
-	fileBufferInGB := flag.Int("fileBufferInGB", maxInt(1, int(memory.TotalMemory()/Giga)-10), "Memory allowed for buffering input files in GB")
+	fileBufferInGB := flag.Int("fileBufferInGB", 2, "Memory allowed for buffering input files in GB")
 	streamFromAddr := flag.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability. Files are still read from disk!")
 	out := flag.String("out", "./t-values.csv", "Path for t-test result file")
 	tTestThreshold := flag.Float64("tTestThresh", 6, "Threshold value for t-test plot")
@@ -92,11 +97,21 @@ func main() {
 		return
 	}
 
+	//TODO:make configureable
+	workerPayloadCreator, err := GetWorkerPayloadCreator("ttest")
+	if err != nil {
+		log.Fatalf("failed to instantiate payload compuation creator : %v", err)
+	}
+
 	config := Config{
 		ComputeWorkers: *numWorkers,
 		FeederWorkers:  *numFeeders,
 		BufferSizeInGB: *fileBufferInGB,
+		//TODO: make configureable
+		SnapshotInterval: 10,
 	}
+
+	//Startup TTtest
 
 	var traceReader traceSource.TraceBlockReader
 	if *streamFromAddr == "" {
@@ -139,18 +154,24 @@ func main() {
 		traceReader = traceSource.NewStreamingTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*pathCaseLogFile), filenameUpdates)
 	}
 
-	batchMeanAndVar, err := TTest(traceReader, wfm.Parser{}, config)
+	//todo: propagate cancellation
+	//todo: add usefull callback
+	workerPayload, err := TTest(context.TODO(), traceReader, wfm.Parser{}, workerPayloadCreator, func(payload WorkerPayload) error { return nil }, config)
 	if err != nil {
 		log.Fatalf("Ttest failed : %v\n", err)
 	}
 
-	if batchMeanAndVar == nil {
+	if workerPayload == nil {
 		log.Fatal("You did not provide input files\n")
 	}
-	//Calc t test values
-	tValues := batchMeanAndVar.ComputeLQ()
+	resultValues, err := workerPayload.Finalize()
+	if err != nil {
+		log.Fatalf("failed to compute t values : %v\n", err)
+	}
 
-	fmt.Printf("First t values are %v\n", tValues[:10])
+	fmt.Printf("First t values are %v\n", resultValues[:10])
+
+	//TTest done, write/plot results
 
 	doesFileExists := func(path string) bool {
 		_, err := os.Stat(path)
@@ -184,7 +205,7 @@ func main() {
 	outFile, err := os.Create(filepath.Join(outPath, nameCandidate))
 	if err != nil {
 		log.Printf("%v\n", err)
-		fmt.Printf("Failed to write to %v, dumping data to console instead\nlength=%v\n%v\n", *out, len(tValues), tValues)
+		fmt.Printf("Failed to write to %v, dumping data to console instead\nlength=%v\n%v\n", *out, len(resultValues), resultValues)
 		return
 	}
 	defer func() {
@@ -193,18 +214,18 @@ func main() {
 		}
 	}()
 
-	tValuesAsStrings := make([]string, len(tValues))
-	for i := range tValues {
-		tValuesAsStrings[i] = fmt.Sprintf("%f", tValues[i])
+	tValuesAsStrings := make([]string, len(resultValues))
+	for i := range resultValues {
+		tValuesAsStrings[i] = fmt.Sprintf("%f", resultValues[i])
 	}
 	csvWriter := csv.NewWriter(outFile)
 	if err := csvWriter.Write(tValuesAsStrings); err != nil {
-		fmt.Printf("Failed to write to outputfile  %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(tValues), tValues)
+		fmt.Printf("Failed to write to outputfile  %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(resultValues), resultValues)
 		return
 	}
 	csvWriter.Flush()
 	if err := csvWriter.Error(); err != nil {
-		fmt.Printf("Failed to flush to outputfile %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(tValues), tValues)
+		fmt.Printf("Failed to flush to outputfile %v : %v\n.Dumping data to console instead\nlength=%v\n%v\n", *out, err, len(resultValues), resultValues)
 		return
 	}
 
@@ -222,7 +243,7 @@ func main() {
 		}
 	}()
 
-	if err := tPlot.PlotAndStore(tValues, *tTestThreshold, plotFile); err != nil {
+	if err := tPlot.PlotAndStore(resultValues, *tTestThreshold, plotFile); err != nil {
 		fmt.Printf("Failed to save plot :%v", err)
 		return
 	}
