@@ -3,10 +3,37 @@ package main
 //Mean and Variances computation for Fixed vs Random T-test
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 )
+
+type WorkerPayloadCreator func(datapointsPerTrace int) WorkerPayload
+
+type WorkerPayload interface {
+	Name() string
+	Update(fixed, random [][]float64)
+	//Must not change the state of the object it is called on
+	Finalize() ([]float64, error)
+	Merge(payload WorkerPayload) error
+	DeepCopy() WorkerPayload
+}
+
+var errOneSetEmpty = errors.New("cannot compute, at least one of the sets is empty")
+
+var availableTests = map[string]WorkerPayloadCreator{
+	"ttest": WorkerPayloadCreator(NewBatchMeanAndVar),
+}
+
+func GetWorkerPayloadCreator(name string) (WorkerPayloadCreator, error) {
+	creator, ok := availableTests[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown test")
+	}
+
+	return creator, nil
+}
 
 type BatchMeanAndVar struct {
 	lenFixed             float64
@@ -16,13 +43,6 @@ type BatchMeanAndVar struct {
 	pwSumOfSquaresFixed  []float64
 	pwSumOfSquaresRandom []float64
 	datapointsPerTrace   int
-}
-
-func minInt(a, b int) int {
-	if a > b {
-		return b
-	}
-	return a
 }
 
 //updates the point ise sums in sum with the datapoints in traces
@@ -55,7 +75,7 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
-func NewBatchMeanAndVar(datapointsPerTrace int) *BatchMeanAndVar {
+func NewBatchMeanAndVar(datapointsPerTrace int) WorkerPayload {
 
 	bmv := &BatchMeanAndVar{
 		lenFixed:             float64(0),
@@ -68,6 +88,10 @@ func NewBatchMeanAndVar(datapointsPerTrace int) *BatchMeanAndVar {
 	}
 
 	return bmv
+}
+
+func (bmv *BatchMeanAndVar) Name() string {
+	return "Welch's T-Test"
 }
 
 func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
@@ -97,7 +121,10 @@ func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
 }
 
 //calculate t test value for each point
-func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
+func (bmv *BatchMeanAndVar) Finalize() ([]float64, error) {
+	if bmv.lenRandom == 0 || bmv.lenFixed == 0 {
+		return nil, errOneSetEmpty
+	}
 	//calc pw means; we assured that batch array are of same length
 
 	pwMeanFixed := make([]float64, bmv.datapointsPerTrace)
@@ -133,21 +160,42 @@ func (bmv *BatchMeanAndVar) ComputeLQ() []float64 {
 		tValues[i] = (pwMeanFixed[i] - pwMeanRandom[i]) / denominator[i]
 	}
 
-	return tValues
+	return tValues, nil
 
 }
 
 //merges other into bmv
-func (bmv *BatchMeanAndVar) MergeBatchMeanAndVar(other *BatchMeanAndVar) {
-	bmv.lenFixed += other.lenFixed
-	bmv.lenRandom += other.lenRandom
+func (bmv *BatchMeanAndVar) Merge(other WorkerPayload) error {
+	otherAsBMV, ok := other.(*BatchMeanAndVar)
+	if !ok {
+		return fmt.Errorf("cannot merge %s with %s", bmv.Name(), other.Name())
+	}
+	bmv.lenFixed += otherAsBMV.lenFixed
+	bmv.lenRandom += otherAsBMV.lenRandom
 
 	for i := 0; i < bmv.datapointsPerTrace; i++ {
-		bmv.pwSumOfSquaresRandom[i] += other.pwSumOfSquaresRandom[i]
-		bmv.pwSumOfSquaresFixed[i] += other.pwSumOfSquaresFixed[i]
+		bmv.pwSumOfSquaresRandom[i] += otherAsBMV.pwSumOfSquaresRandom[i]
+		bmv.pwSumOfSquaresFixed[i] += otherAsBMV.pwSumOfSquaresFixed[i]
 
-		bmv.pwSumRandom[i] += other.pwSumRandom[i]
-		bmv.pwSumFixed[i] += other.pwSumFixed[i]
+		bmv.pwSumRandom[i] += otherAsBMV.pwSumRandom[i]
+		bmv.pwSumFixed[i] += otherAsBMV.pwSumFixed[i]
 	}
+	return nil
+}
 
+func (bmv *BatchMeanAndVar) DeepCopy() WorkerPayload {
+	res := &BatchMeanAndVar{
+		lenFixed:             bmv.lenFixed,
+		lenRandom:            bmv.lenRandom,
+		pwSumFixed:           make([]float64, bmv.datapointsPerTrace),
+		pwSumRandom:          make([]float64, bmv.datapointsPerTrace),
+		pwSumOfSquaresFixed:  make([]float64, bmv.datapointsPerTrace),
+		pwSumOfSquaresRandom: make([]float64, bmv.datapointsPerTrace),
+		datapointsPerTrace:   bmv.datapointsPerTrace,
+	}
+	copy(res.pwSumFixed, bmv.pwSumFixed)
+	copy(res.pwSumRandom, bmv.pwSumRandom)
+	copy(res.pwSumOfSquaresFixed, bmv.pwSumOfSquaresFixed)
+	copy(res.pwSumOfSquaresRandom, bmv.pwSumOfSquaresRandom)
+	return res
 }

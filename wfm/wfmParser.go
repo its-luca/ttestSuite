@@ -28,6 +28,11 @@ const (
 	offsetSetType                 = 0x04e
 )
 
+type TraceParser interface {
+	ParseTraces([]byte, [][]float64) ([][]float64, error)
+	GetNumberOfTraces([]byte) (int, error)
+}
+
 //Adapter to the TraceParser interface
 type Parser struct{}
 
@@ -86,15 +91,18 @@ func ParseTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 		frames = make([][]float64, numberOfTraces)
 	}
 
+	var start, end int
+	var rawFrame []byte
 	for frameIDX := range frames {
-		start := offsetCurveBuffer + (frameIDX+1)*preChargeBytes + (frameIDX * datapointsPerFF * 2) + frameIDX*postChargeBytes
-		end := start + (datapointsPerFF * 2)
-		rawFrame := rawWFM[start:end]
+		start = offsetCurveBuffer + (frameIDX+1)*preChargeBytes + (frameIDX * datapointsPerFF * 2) + frameIDX*postChargeBytes
+		end = start + (datapointsPerFF * 2)
+		rawFrame = rawWFM[start:end]
 		if frames[frameIDX] == nil {
 			frames[frameIDX] = make([]float64, datapointsPerFF)
 		}
+		var rawValue int16
 		for i := range frames[frameIDX] {
-			rawValue := int16(binary.LittleEndian.Uint16(rawFrame[2*i : 2*i+2]))
+			rawValue = int16(binary.LittleEndian.Uint16(rawFrame[2*i : 2*i+2]))
 			frames[frameIDX][i] = (float64(rawValue) * yScale) + yOffset
 		}
 	}
