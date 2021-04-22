@@ -36,6 +36,7 @@ func maxFloat64(s []float64) (float64, error) {
 	return max, nil
 }
 
+//Plot creates a lines plot for the values in tValues with a horizontal line at threshhold
 func Plot(tValues []float64, threshold float64) (*plot.Plot, error) {
 	p := plot.New()
 	p.Title.Text = "T-Test"
@@ -70,6 +71,7 @@ func Plot(tValues []float64, threshold float64) (*plot.Plot, error) {
 
 }
 
+//PlotAndStore wrapps Plot and stores the result in out
 func PlotAndStore(tValues []float64, threshold float64, out io.Writer) error {
 	p, err := Plot(tValues, threshold)
 	if err != nil {

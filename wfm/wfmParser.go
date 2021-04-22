@@ -33,7 +33,7 @@ type TraceParser interface {
 	GetNumberOfTraces([]byte) (int, error)
 }
 
-//Adapter to the TraceParser interface
+//Parser is an adapter to the TraceParser interface
 type Parser struct{}
 
 func (p Parser) GetNumberOfTraces(bytes []byte) (int, error) {
@@ -52,7 +52,7 @@ func GetNumberOfTraces(rawWFM []byte) (int, error) {
 	return int(binary.LittleEndian.Uint32(rawWFM[offsetOfNumberOfFF4BUint:offsetOfNumberOfFF4BUint+4])) + 1, nil
 }
 
-//based on tektronix wfm spec, has basically zero error checks right now but seems to work
+//ParseTraces extracts trace data from a tektronix wfm file. Very rough state; has basically zero error checks right now but
 func ParseTraces(rawWFM []byte, frames [][]float64) ([][]float64, error) {
 
 	numberOfTraces, err := GetNumberOfTraces(rawWFM)

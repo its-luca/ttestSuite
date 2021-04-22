@@ -1,4 +1,4 @@
-package httpReceiver
+package traceSource
 
 import (
 	"context"
@@ -8,7 +8,89 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"ttestSuite/wfm"
 )
+
+//StreamingTraceFileReader does not expect all files to be available from the start but allows to receive updates
+//about file availability count. Idea is to process files as they come in from the oscilloscope. Number of files
+//must be known in advance for now
+type StreamingTraceFileReader struct {
+	//amount of files we are expecting
+	totalFileCount int
+	//filenames of already available files, stored in order of received
+	availableFiles []string
+	folderPath     string
+	tracesPerFile  int
+	caseLog        []int
+	caseFileName   string
+	fileNameChan   <-chan string
+}
+
+func NewStreamingTraceFileReader(fileCount int, folderPath, caseFileName string, nextFile <-chan string) *StreamingTraceFileReader {
+	r := &StreamingTraceFileReader{
+		totalFileCount: fileCount,
+		availableFiles: make([]string, 0, fileCount),
+		folderPath:     folderPath,
+		tracesPerFile:  0,
+		caseFileName:   caseFileName,
+		caseLog:        nil,
+		fileNameChan:   nextFile,
+	}
+	return r
+}
+
+func (recv *StreamingTraceFileReader) TotalBlockCount() int {
+	return recv.totalFileCount
+}
+
+//GetBlock may block if file denoted by nr is not yet available
+func (recv *StreamingTraceFileReader) GetBlock(nr int) ([]byte, []int, error) {
+
+	if nr >= recv.totalFileCount {
+		return nil, nil, fmt.Errorf("nr is out of bounds (got %v, need <= %v)", nr, recv.totalFileCount)
+	}
+
+	if nr >= len(recv.availableFiles) {
+		//wait until file is available
+		for nr >= len(recv.availableFiles) {
+			newFileName := <-recv.fileNameChan
+			//check if channel was closed
+			if newFileName == "" {
+				return nil, nil, fmt.Errorf("streaming source closed before file number %v was available", nr)
+			}
+			recv.availableFiles = append(recv.availableFiles, newFileName)
+		}
+		//update case file
+		rawCaseLog, err := ioutil.ReadFile(filepath.Join(recv.folderPath, recv.caseFileName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read case file : %v", err)
+		}
+		recv.caseLog, err = ParseCaseLog(rawCaseLog)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse case log file : %v", err)
+		}
+	}
+
+	//file already available, just read and return
+	fileContent, err := ioutil.ReadFile(filepath.Join(recv.folderPath, recv.availableFiles[nr]))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read wfm file : %v", err)
+	}
+	if recv.tracesPerFile == 0 {
+		recv.tracesPerFile, err = wfm.GetNumberOfTraces(fileContent)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse file : %v", err)
+		}
+	}
+	startIDX := nr * recv.tracesPerFile
+	stopIDX := (nr + 1) * recv.tracesPerFile
+	if startIDX >= len(recv.caseLog) || stopIDX > len(recv.caseLog) {
+		return nil, nil, fmt.Errorf("file nr %v, caes indices are start=%v end=%v but len is only %v",
+			nr, startIDX, stopIDX, len(recv.caseLog))
+	}
+	return fileContent, recv.caseLog[startIDX:stopIDX], nil
+
+}
 
 type receiver struct {
 	newFileNames            chan string
@@ -42,7 +124,11 @@ func (rec *receiver) handleMeasureStart(w http.ResponseWriter, r *http.Request) 
 		log.Printf("Failed to read body : %v\n", err)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			log.Printf("failed to close request body")
+		}
+	}()
 
 	msg := measureStartMsg{}
 	if err := json.Unmarshal(body, &msg); err != nil {
@@ -75,7 +161,11 @@ func (rec *receiver) handleMeasureUpdate(w http.ResponseWriter, r *http.Request)
 		log.Printf("Failed to read body : %v\n", err)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			log.Printf("failed to close request body")
+		}
+	}()
 
 	msg := measureUpdateMsg{}
 	if err := json.Unmarshal(body, &msg); err != nil {

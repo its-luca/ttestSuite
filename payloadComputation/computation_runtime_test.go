@@ -1,4 +1,4 @@
-package main
+package payloadComputation
 
 import (
 	"context"
@@ -47,16 +47,17 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	mockParser := mockTraceParser{
 		frames: [][]float64{{1, 2, 3, 4}, {5, 6, 7, 8}},
 	}
-
-	config := ComputationConfig{
-		ComputeWorkers:   2,
-		BufferSizeInGB:   1,
-		SnapshotInterval: 1,
-	}
-
 	creator, err := GetWorkerPayloadCreator("ttest")
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
+	}
+
+	config := ComputationConfig{
+		ComputeWorkers:       2,
+		BufferSizeInGB:       1,
+		SnapshotInterval:     1,
+		WorkerPayloadCreator: creator,
+		SnapshotSaver:        func(payload WorkerPayload) error { return nil },
 	}
 
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -64,7 +65,7 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	defer testCancel()
 	var tTestErr error
 	go func() {
-		_, tTestErr = TTest(context.Background(), mockSource, mockParser, creator, func(payload WorkerPayload) error { return nil }, config)
+		_, tTestErr = Run(context.Background(), mockSource, mockParser, config)
 		done <- nil
 	}()
 
@@ -117,13 +118,14 @@ func (m *mockTest) Name() string {
 	return "mockTest"
 }
 
+func (m *mockTest) MaxSubroutines() int {
+	return 0
+}
+
 func createMockTest(_ int) WorkerPayload {
 	return &mockTest{sum: 0}
 }
 
-//Failes, problen: the worker who sends the snapshot does necessarily have the complete history from file
-//0 to the snapshot point. Thus we get only some delta. Even worse, currently we cannot predict which files are
-//in that delta
 func TestTTest_SnapshotValues(t *testing.T) {
 	blocks := [][][]float64{
 		{[]float64{1, 1, 1, 1}},
@@ -202,19 +204,20 @@ func TestTTest_SnapshotValues(t *testing.T) {
 		//try each input with different worker counts to detect racy behaviour
 		for workerCount := 1; workerCount < 8; workerCount++ {
 			for _, v := range inputs {
-				config := ComputationConfig{
-					ComputeWorkers:   workerCount,
-					BufferSizeInGB:   1,
-					SnapshotInterval: v.intervalSize,
-				}
-
 				gotSnapshotData := make([]WorkerPayload, 0)
 				snapshotSaver := func(s WorkerPayload) error {
 					gotSnapshotData = append(gotSnapshotData, s)
 					return nil
 				}
+				config := ComputationConfig{
+					ComputeWorkers:       workerCount,
+					BufferSizeInGB:       1,
+					SnapshotInterval:     v.intervalSize,
+					WorkerPayloadCreator: createMockTest,
+					SnapshotSaver:        snapshotSaver,
+				}
 
-				gotFinalValue, tTestErr := TTest(context.Background(), blockSource, parser, createMockTest, snapshotSaver, config)
+				gotFinalValue, tTestErr := Run(context.Background(), blockSource, parser, config)
 				if tTestErr != nil {
 					//if we wanted this error we can accept the test at this point
 					if v.wantErr != nil && errors.Is(tTestErr, v.wantErr) {
@@ -230,7 +233,7 @@ func TestTTest_SnapshotValues(t *testing.T) {
 				for i := range v.wantSnapshotValues {
 					gotSnapResult, err := gotSnapshotData[i].Finalize()
 					if err != nil {
-						t.Fatalf("Unexpected error finalizing snapshot data at index %v : %v\n", i, err)
+						t.Fatalf("Unexpected error finalizing snapshotDeltaShard data at index %v : %v\n", i, err)
 					}
 					if gotSnapResult[0] != v.wantSnapshotValues[i][0] {
 						t.Errorf("snapshot %v: want %v got %v\n", i, v.wantSnapshotValues[i][0], gotSnapResult[0])

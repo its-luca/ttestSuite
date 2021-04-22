@@ -1,4 +1,4 @@
-package httpReceiver
+package traceSource
 
 import (
 	"bytes"
@@ -70,10 +70,10 @@ func Test_Receiver_CancelAfterReceivedAll(t *testing.T) {
 	go func() {
 		rs, err := srv.Client().Post(srv.URL+"/start", "application/json", bytes.NewReader(startPayload))
 		if err != nil {
-			t.Fatalf("Unexpected post error for measure start msg :%v\n", err)
+			t.Errorf("Unexpected post error for measure start msg :%v\n", err)
 		}
 		if rs.StatusCode != http.StatusOK {
-			t.Fatalf("unexpected error status for measure start msg :%v\n", rs.Status)
+			t.Errorf("unexpected error status for measure start msg :%v\n", rs.Status)
 		}
 	}()
 

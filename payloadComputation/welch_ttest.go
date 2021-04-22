@@ -1,6 +1,6 @@
-package main
+package payloadComputation
 
-//Mean and Variances computation for Fixed vs Random T-test
+//Implementation of Welch's TTest as a WorkerPayload
 
 import (
 	"errors"
@@ -9,45 +9,9 @@ import (
 	"sync"
 )
 
-type WorkerPayloadCreator func(datapointsPerTrace int) WorkerPayload
+var ErrOneSetEmpty = errors.New("cannot compute, at least one of the sets is empty")
 
-type WorkerPayload interface {
-	Name() string
-	Update(fixed, random [][]float64)
-	//Must not change the state of the object it is called on
-	Finalize() ([]float64, error)
-	Merge(payload WorkerPayload) error
-	DeepCopy() WorkerPayload
-}
-
-var errOneSetEmpty = errors.New("cannot compute, at least one of the sets is empty")
-
-var availableTests = map[string]WorkerPayloadCreator{
-	"ttest": WorkerPayloadCreator(NewBatchMeanAndVar),
-}
-
-//GetAvailablePayloads returns a slice with all valid payload names
-//that may be passed to GetWorkerPayloadCreator
-func GetAvailablePayloads() []string {
-	names := make([]string, 0, len(availableTests))
-	for key := range availableTests {
-		names = append(names, key)
-	}
-	return names
-}
-
-//GetWorkerPayloadCreator returns the WorkerPayloadCreator that is registered
-//for name or an error if name is not found
-func GetWorkerPayloadCreator(name string) (WorkerPayloadCreator, error) {
-	creator, ok := availableTests[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown test")
-	}
-
-	return creator, nil
-}
-
-type BatchMeanAndVar struct {
+type WelchTTtest struct {
 	lenFixed             float64
 	lenRandom            float64
 	pwSumFixed           []float64
@@ -57,7 +21,7 @@ type BatchMeanAndVar struct {
 	datapointsPerTrace   int
 }
 
-//updates the point ise sums in sum with the datapoints in traces
+//addPwSumFloat64 point wise adds all traces to sum
 func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 	if len(traces) > 1 {
 		if len(traces[0]) != len(sum) {
@@ -72,7 +36,7 @@ func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
-//updates the point ise sums in sum with the squares of the datapoints in traces
+//addPwSumOfSquaresFloat64 point wise adds the square of all trace datapoints to sum
 func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	if len(traces) > 1 {
 		if len(traces[0]) != len(sum) {
@@ -87,9 +51,10 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
+//NewBatchMeanAndVar creates a new WelchTTtest instance.
+//All calls to Update must contains exactly datapointsPerTrace entries per trace otherwise we panic
 func NewBatchMeanAndVar(datapointsPerTrace int) WorkerPayload {
-
-	bmv := &BatchMeanAndVar{
+	bmv := &WelchTTtest{
 		lenFixed:             float64(0),
 		lenRandom:            float64(0),
 		pwSumFixed:           make([]float64, datapointsPerTrace),
@@ -102,11 +67,15 @@ func NewBatchMeanAndVar(datapointsPerTrace int) WorkerPayload {
 	return bmv
 }
 
-func (bmv *BatchMeanAndVar) Name() string {
+func (bmv *WelchTTtest) MaxSubroutines() int {
+	return 4
+}
+
+func (bmv *WelchTTtest) Name() string {
 	return "Welch's T-Test"
 }
 
-func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
+func (bmv *WelchTTtest) Update(fixed, random [][]float64) {
 	bmv.lenFixed += float64(len(fixed))
 	bmv.lenRandom += float64(len(random))
 
@@ -132,10 +101,9 @@ func (bmv *BatchMeanAndVar) Update(fixed, random [][]float64) {
 	wg.Wait()
 }
 
-//calculate t test value for each point
-func (bmv *BatchMeanAndVar) Finalize() ([]float64, error) {
+func (bmv *WelchTTtest) Finalize() ([]float64, error) {
 	if bmv.lenRandom == 0 || bmv.lenFixed == 0 {
-		return nil, errOneSetEmpty
+		return nil, ErrOneSetEmpty
 	}
 	//calc pw means; we assured that batch array are of same length
 
@@ -176,9 +144,8 @@ func (bmv *BatchMeanAndVar) Finalize() ([]float64, error) {
 
 }
 
-//merges other into bmv
-func (bmv *BatchMeanAndVar) Merge(other WorkerPayload) error {
-	otherAsBMV, ok := other.(*BatchMeanAndVar)
+func (bmv *WelchTTtest) Merge(other WorkerPayload) error {
+	otherAsBMV, ok := other.(*WelchTTtest)
 	if !ok {
 		return fmt.Errorf("cannot merge %s with %s", bmv.Name(), other.Name())
 	}
@@ -195,8 +162,8 @@ func (bmv *BatchMeanAndVar) Merge(other WorkerPayload) error {
 	return nil
 }
 
-func (bmv *BatchMeanAndVar) DeepCopy() WorkerPayload {
-	res := &BatchMeanAndVar{
+func (bmv *WelchTTtest) DeepCopy() WorkerPayload {
+	res := &WelchTTtest{
 		lenFixed:             bmv.lenFixed,
 		lenRandom:            bmv.lenRandom,
 		pwSumFixed:           make([]float64, bmv.datapointsPerTrace),
