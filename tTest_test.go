@@ -48,9 +48,8 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 		frames: [][]float64{{1, 2, 3, 4}, {5, 6, 7, 8}},
 	}
 
-	config := Config{
+	config := ComputationConfig{
 		ComputeWorkers:   2,
-		FeederWorkers:    1,
 		BufferSizeInGB:   1,
 		SnapshotInterval: 1,
 	}
@@ -203,9 +202,8 @@ func TestTTest_SnapshotValues(t *testing.T) {
 		//try each input with different worker counts to detect racy behaviour
 		for workerCount := 1; workerCount < 8; workerCount++ {
 			for _, v := range inputs {
-				config := Config{
+				config := ComputationConfig{
 					ComputeWorkers:   workerCount,
-					FeederWorkers:    1,
 					BufferSizeInGB:   1,
 					SnapshotInterval: v.intervalSize,
 				}

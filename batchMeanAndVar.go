@@ -26,6 +26,18 @@ var availableTests = map[string]WorkerPayloadCreator{
 	"ttest": WorkerPayloadCreator(NewBatchMeanAndVar),
 }
 
+//GetAvailablePayloads returns a slice with all valid payload names
+//that may be passed to GetWorkerPayloadCreator
+func GetAvailablePayloads() []string {
+	names := make([]string, 0, len(availableTests))
+	for key := range availableTests {
+		names = append(names, key)
+	}
+	return names
+}
+
+//GetWorkerPayloadCreator returns the WorkerPayloadCreator that is registered
+//for name or an error if name is not found
 func GetWorkerPayloadCreator(name string) (WorkerPayloadCreator, error) {
 	creator, ok := availableTests[name]
 	if !ok {

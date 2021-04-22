@@ -208,10 +208,19 @@ type FileLogBundle struct {
 
 var ErrInvSnapInterval = errors.New("snapshot interval  large than trace file count")
 
+//Defines CPU and memory usage
+type ComputationConfig struct {
+	//number of compute workers to spawn; increase if not cpu gated
+	ComputeWorkers int
+	//controls buffer (unit trace files) available to FeederWorkers; increase to fill RAM for max performance
+	BufferSizeInGB int
+	//Amount of files after which a snapshot is created
+	SnapshotInterval int
+}
+
 //TTest is a parallelized implementation of Welch's T-test
-func TTest(_ context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser, workerPayloadCreator WorkerPayloadCreator, snapshotSaver func(payload WorkerPayload) error, config Config) (WorkerPayload, error) {
+func TTest(_ context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser, workerPayloadCreator WorkerPayloadCreator, snapshotSaver func(payload WorkerPayload) error, config ComputationConfig) (WorkerPayload, error) {
 	//todo: use ctx param to propagate cancel signal
-	//todo: make configurable
 	numTraceFiles := traceSource.TotalBlockCount()
 	if config.SnapshotInterval > numTraceFiles {
 		return nil, ErrInvSnapInterval
