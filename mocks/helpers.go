@@ -1,13 +1,47 @@
 package mocks
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	mockTraceSource "ttestSuite/mocks/traceSource"
 	"ttestSuite/mocks/wfm"
 	"ttestSuite/traceSource"
 	"ttestSuite/wfm"
 )
+
+//ParseCSVToFloat64 takes a raw csv file and parses each line as into a float64 slice
+func ParseCSVToFloat64(csvData []byte) ([][]float64, error) {
+	//parse csv to array
+	scanner := bufio.NewScanner(bytes.NewReader(csvData))
+	buf := make([]byte, 0, len(csvData))
+	scanner.Buffer(buf, len(buf))
+	scanner.Split(bufio.ScanLines)
+
+	parsedData := make([][]float64, 0)
+	for scanner.Scan() {
+		line := scanner.Text()
+		tokens := strings.Split(line, ",")
+		row := make([]float64, 0, len(tokens))
+		for _, token := range tokens {
+			f, err := strconv.ParseFloat(strings.TrimSpace(token), 64)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to parse test input %v to float64 : %v\n", token, err)
+			}
+			row = append(row, f)
+		}
+		parsedData = append(parsedData, row)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("Failed to parse test data faile : %v\n", err)
+	}
+
+	return parsedData, nil
+}
 
 //CreateFloatSourceParserPair creates a block reader and parser with len(blocksAsFloats) blocks where block nr x
 //contains the traces blocksAsFloat[x]. If failAfter is >= 0 the block reader will fail for each number greater than failAfter

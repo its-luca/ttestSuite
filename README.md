@@ -11,9 +11,9 @@ For this, ttestSuite provides two http endpoints. See `examples/measure-dummy.py
 and idea of how to implement this in your measurement script
 
 # Build and Use
-Run `go build ./...` to build. This will create the main binary `ttestSuite`.
+Run `go build ./cmd/ttestSuite` to build. This will create the main binary `ttestSuite`.
 For a basic usage is suffices to pass the `-caseFile`, `-traceFolder` and `-traceFileCount` flags.
-You can also build a standalone plotting binary with `go build ./tPlot/plotCLI/`.
+You can also build a standalone plotting binary with `go build ./cmd/plot`.
 
 
 
