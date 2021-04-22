@@ -148,9 +148,8 @@ func Test_parseAndTTest(t *testing.T) {
 	simManyFilesReader.caseLog = caseLog
 	//hacky file reader setup done
 
-	config := Config{
+	config := ComputationConfig{
 		ComputeWorkers:   3,
-		FeederWorkers:    1,
 		BufferSizeInGB:   1,
 		SnapshotInterval: 1,
 	}
