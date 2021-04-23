@@ -31,12 +31,10 @@ func maxInt(a, b int) int {
 	}
 }
 
-//workerContext bundles the channels/wait groups required for parallelization
-type workerContext struct {
+//syncVarsBundle bundles the channels/wait groups required for parallelization
+type syncVarsBundle struct {
 	//feeder writes news jobs, compute workers read; close once both of them are done
 	jobs chan *job
-	//closing this performs graceful termination of all spawned workers
-	shouldQuit <-chan interface{}
 	//send error information
 	errorChan chan error
 	//count of active workers
@@ -59,10 +57,10 @@ type snapshotDeltaShard struct {
 }
 
 //feederWorker, reads trace files [start,end[ and puts them to job chan
-func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockReader, wCtx workerContext) {
+func feederWorker(ctx context.Context, feederID, start, end int, traceSource traceSource.TraceBlockReader, syncVars syncVarsBundle) {
 	defer func() {
 		log.Printf("Feeder %v done\n", feederID)
-		wCtx.wg.Done()
+		syncVars.wg.Done()
 	}()
 	log.Printf("Feeder %v started on range [%v,%v[\n", feederID, start, end)
 	traceBlockIDX := start
@@ -72,7 +70,7 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 	enqueueWaitSinceLastTick := 0 * time.Second
 	for {
 		select {
-		case <-wCtx.shouldQuit:
+		case <-ctx.Done():
 			log.Printf("Feeder quits because there was an error")
 			return
 		case <-metricsTicker.C:
@@ -95,7 +93,7 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 				//read file
 				rawWFM, caseLog, err := traceSource.GetBlock(traceBlockIDX)
 				if err != nil {
-					wCtx.errorChan <- fmt.Errorf("failed get trace block/file with id %v : %v", traceBlockIDX, err)
+					syncVars.errorChan <- fmt.Errorf("failed get trace block/file with id %v : %v", traceBlockIDX, err)
 					return
 				}
 				flb := &job{
@@ -105,7 +103,7 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 				}
 				readTimeSinceLastTick += time.Since(startTime)
 				startTime = time.Now()
-				wCtx.jobs <- flb
+				syncVars.jobs <- flb
 				enqueueWaitSinceLastTick += time.Since(startTime)
 				processedElements++
 				traceBlockIDX++
@@ -117,11 +115,11 @@ func feederWorker(feederID, start, end int, traceSource traceSource.TraceBlockRe
 //computeWorker, consumes wCtx.jobs and adds them the WorkerPayload created by workerPayloadCreator.
 //Every snapshotInterval files a snapshotDeltaShard is published on snapshotResults.
 //In the end the delta to the latest snapshot (if there is any) is published on resultChan.
-func computeWorker(workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int, resultChan chan<- WorkerPayload,
-	traceParser wfm.TraceParser, wCtx workerContext, snapshotResults chan<- snapshotDeltaShard, workerPayloadCreator WorkerPayloadCreator) {
+func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int, resultChan chan<- WorkerPayload,
+	traceParser wfm.TraceParser, syncVars syncVarsBundle, snapshotResults chan<- snapshotDeltaShard, workerPayloadCreator WorkerPayloadCreator) {
 	defer func() {
 		log.Printf("Worker %v done\n", workerID)
-		wCtx.wg.Done()
+		syncVars.wg.Done()
 	}()
 	log.Printf("Worker %v started\n", workerID)
 	var frames [][]float64
@@ -135,10 +133,10 @@ func computeWorker(workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int
 	var err error
 	for {
 		select {
-		case <-wCtx.shouldQuit:
+		case <-ctx.Done():
 			log.Printf("Worker %v received error message and is shuttding down\n", workerID)
 			return
-		case workPackage := <-wCtx.jobs:
+		case workPackage := <-syncVars.jobs:
 			{
 				//channel has been closed, no more jobs are coming; send results and finish
 				if workPackage == nil {
@@ -189,7 +187,7 @@ func computeWorker(workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int
 
 				frames, err = traceParser.ParseTraces(workPackage.file, frames)
 				if err != nil {
-					wCtx.errorChan <- fmt.Errorf("worker %v : failed to parse wfm file : %v", workerID, err)
+					syncVars.errorChan <- fmt.Errorf("worker %v : failed to parse wfm file : %v", workerID, err)
 					return
 				}
 
@@ -225,7 +223,7 @@ func computeWorker(workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int
 	}
 }
 
-func snapshoter(snapshotWg *sync.WaitGroup, maxSnapshotIDX int, shouldQuit <-chan interface{},
+func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX int,
 	deltaShards <-chan snapshotDeltaShard, errorChan chan<- error, finalSnapshot chan<- WorkerPayload, config ComputationConfig) (lastSnapshot WorkerPayload) {
 	defer snapshotWg.Done()
 
@@ -251,7 +249,7 @@ func snapshoter(snapshotWg *sync.WaitGroup, maxSnapshotIDX int, shouldQuit <-cha
 
 	for {
 		select {
-		case <-shouldQuit:
+		case <-ctx.Done():
 			log.Printf("snapshotter: received shutdown signal\n")
 			return
 		case v, ok := <-deltaShards:
@@ -364,8 +362,9 @@ type ComputationConfig struct {
 
 //Run performs the parallel computation of the payload denoted by config.WorkerPayloadCreator on the data defined by traceSource and traceParser
 //According to config.SnapshotInterval, config.SnapshotSaver is called with periodic snapshots/intermediate results.
-func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser, config ComputationConfig) (WorkerPayload, error) {
-	//todo: use ctx param to propagate cancel signal
+func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser, config ComputationConfig) (WorkerPayload, error) {
+	ctx, cancelCtx := context.WithCancel(ctx)
+	defer cancelCtx()
 
 	numTraceFiles := traceSource.TotalBlockCount()
 	if config.SnapshotInterval > numTraceFiles {
@@ -395,8 +394,6 @@ func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParse
 
 	jobs := make(chan *job, jobQueueLen)
 	errorChan := make(chan error)
-	//if closed, all listening routines should terminate.
-	shouldQuit := make(chan interface{})
 	resultChan := make(chan WorkerPayload, config.ComputeWorkers)
 	snapshotDeltaShardChan := make(chan snapshotDeltaShard, config.ComputeWorkers)
 	var computeWorkerWg, feederWorkerWg, snapshotWg sync.WaitGroup
@@ -408,14 +405,14 @@ func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParse
 
 	//orchestrate snapshots, final snapshot (it it is reached) is published on finalSnapshot channel
 	snapshotWg.Add(1)
-	go snapshoter(&snapshotWg, maxSnapshotIDX, shouldQuit, snapshotDeltaShardChan, errorChan, finalSnapshot, config)
+	go snapshoter(ctx, &snapshotWg, maxSnapshotIDX, snapshotDeltaShardChan, errorChan, finalSnapshot, config)
 
 	//stats ticker
 	statsTicker := time.NewTicker(5 * time.Second)
 	go func() {
 		for {
 			select {
-			case <-shouldQuit:
+			case <-ctx.Done():
 				return
 			case <-statsTicker.C:
 				{
@@ -425,29 +422,27 @@ func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParse
 		}
 	}()
 
-	computeWorkerCtx := workerContext{
-		jobs:       jobs,
-		shouldQuit: shouldQuit,
-		errorChan:  errorChan,
-		wg:         &computeWorkerWg,
+	computeWorkerCtx := syncVarsBundle{
+		jobs:      jobs,
+		errorChan: errorChan,
+		wg:        &computeWorkerWg,
 	}
 
-	feederWorkerCtx := workerContext{
-		jobs:       jobs,
-		shouldQuit: shouldQuit,
-		errorChan:  errorChan,
-		wg:         &feederWorkerWg,
+	feederWorkerCtx := syncVarsBundle{
+		jobs:      jobs,
+		errorChan: errorChan,
+		wg:        &feederWorkerWg,
 	}
 
 	//create ComputeWorkers
 	for id := 0; id < config.ComputeWorkers; id++ {
 		computeWorkerCtx.wg.Add(1)
-		go computeWorker(id, tracesPerFile, config.SnapshotInterval, maxSnapshotIDX, resultChan, traceParser, computeWorkerCtx, snapshotDeltaShardChan, config.WorkerPayloadCreator)
+		go computeWorker(ctx, id, tracesPerFile, config.SnapshotInterval, maxSnapshotIDX, resultChan, traceParser, computeWorkerCtx, snapshotDeltaShardChan, config.WorkerPayloadCreator)
 	}
 
 	//start feeder, we only support one
 	feederWorkerCtx.wg.Add(1)
-	go feederWorker(0, 0, numTraceFiles, traceSource, feederWorkerCtx)
+	go feederWorker(ctx, 0, 0, numTraceFiles, traceSource, feederWorkerCtx)
 
 	//stores the first error send over errorChan
 	var backgroundError error
@@ -457,12 +452,12 @@ func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParse
 			log.Printf("Received error : %v", recError)
 			backgroundError = recError
 			if !signaledShutdown {
-				close(shouldQuit)
+				cancelCtx()
 				signaledShutdown = true
 			}
 		}
 		if !signaledShutdown {
-			close(shouldQuit)
+			cancelCtx()
 		}
 	}()
 
@@ -502,7 +497,7 @@ func Run(_ context.Context, traceSource traceSource.TraceBlockReader, traceParse
 
 	lastSnapshot := <-finalSnapshot
 	if lastSnapshot == nil && combined == nil {
-		return nil, fmt.Errorf("failed to retrive resutls")
+		return nil, fmt.Errorf("failed to retrive results")
 
 	}
 	//this happens if snapshotDeltaShard interval is large than the amount of input blocks

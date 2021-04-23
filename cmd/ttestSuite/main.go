@@ -296,6 +296,10 @@ func main() {
 		return
 	}
 
+	//create context that closes done when OS signal arrives or main is done
+	mainCtx, mainCtxCancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer mainCtxCancel()
+
 	//Prepare traceReader
 	var traceReader traceSource.TraceBlockReader
 	if app.streamFromAddr == "" {
@@ -322,13 +326,9 @@ func main() {
 		}()
 
 		//setup graceful shutdown, note that the webserver is started concurrently, else we could not receive the start message
-		receiverCtx, receiverCancel := context.WithCancel(context.Background())
-		shutdownRequest := make(chan os.Signal, 1)
-		signal.Notify(shutdownRequest, os.Interrupt)
 		go func() {
-			<-shutdownRequest
+			<-mainCtx.Done()
 			log.Printf("initiating shutdown...")
-			receiverCancel()
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer shutdownCancel()
 			if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -337,7 +337,7 @@ func main() {
 		}()
 
 		//wait for the measure script to send the start command
-		app.traceFileCount, filenameUpdates = receiver.WaitForMeasureStart(receiverCtx)
+		app.traceFileCount, filenameUpdates = receiver.WaitForMeasureStart(mainCtx)
 
 		traceReader = traceSource.NewStreamingTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile), filenameUpdates)
 	}
@@ -372,8 +372,7 @@ func main() {
 		},
 	}
 
-	//todo: propagate cancellation
-	workerPayload, err := payloadComputation.Run(context.TODO(), traceReader, wfm.Parser{}, config)
+	workerPayload, err := payloadComputation.Run(mainCtx, traceReader, wfm.Parser{}, config)
 	if err != nil {
 		log.Fatalf("Ttest failed : %v\n", err)
 	}
