@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -192,8 +193,8 @@ func ParseAndValidateFlags() (*application, error) {
 	pathTraceFolder := cmdFlags.String("traceFolder", "", "Path to folder containing wfm trace files (expected naming scheme is trace (v).wfm where v is an incrementing number (starting at 1) in sync with the case log file")
 	traceFileCount := cmdFlags.Int("traceFileCount", 0, "Number of trace files. Ignored in streaming setup")
 	pathCaseLogFile := cmdFlags.String("caseFile", "", "Path to the trace file (either 0 or 1, one entry per line)")
-	numWorkers := cmdFlags.Int("numWorkers", runtime.NumCPU()-1, "Number of threads to do the t-test computation (also note numFeeders). Influences CPU usage")
-	fileBufferInGB := cmdFlags.Int("fileBufferInGB", 2, "Memory allowed for buffering input files in GB")
+	numWorkers := cmdFlags.Int("numWorkers", int(math.Min(float64(runtime.NumCPU()), 4)), "Number of threads to do the t-test computation (also note numFeeders). Influences CPU usage")
+	fileBufferInGB := cmdFlags.Int("fileBufferInGB", 1, "Memory allowed for buffering input files in GB")
 	streamFromAddr := cmdFlags.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability. Files are still read from disk!")
 	outFolderPath := cmdFlags.String("outFolderPath", "", "Directory path for saving results. Defaults creating a folder name after pathTraceFolder in the current directory")
 	tTestThreshold := cmdFlags.Float64("tTestThresh", 6, "Threshold value for t-test plot")

@@ -18,9 +18,11 @@ You can also build a standalone plotting binary with `go build ./cmd/plot`.
 
 
 ## Performance Tweaking
-The default worker and buffer settings assume fast read speeds (SSD). While running, ttestSuite
-periodically reports "Buffer Usage" in "buffered wfm files". As long as this does not fill up, it is safe to 
-decrease the number of workers and/or the buffer size without sacrificing performance.
+ttestSuite uses a pipeline for processing. A feeder reads the input files into an internal
+buffer of size `-fileBufferInGB` which gets drained by `-numWorkers`. A periodic "Buffer Usage" message
+will inform you about the fill level of the buffer. If the buffers runs full you can either increase the
+worker count (if you have reamining cpu cores) or increase the buffer size. Note that depending on the computed
+payload function increasing the workers can also cost significant amount of RAM.
 
 
 
