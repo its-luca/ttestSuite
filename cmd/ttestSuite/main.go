@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/pbnjay/memory"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -97,7 +98,6 @@ func createCollisionFreeName(outPath string, doesFileExist func(path string) boo
 func StorePlot(values []float64, plotable payloadComputation.Plotable, folderPath, nameSuffix string) error {
 	//create plot and store as png
 	plotPath := filepath.Join(folderPath, fmt.Sprintf("plot-%s.png", nameSuffix))
-	fmt.Printf("Storing plot in %v\n", plotPath)
 	plotFile, err := os.Create(plotPath)
 	if err != nil {
 		return fmt.Errorf("failed to create plot file : %v\n", err)
@@ -362,7 +362,7 @@ func main() {
 
 	//Call Run function
 
-	config := payloadComputation.ComputationConfig{
+	config := payloadComputation.ComputationRuntime{
 		ComputeWorkers:       app.numWorkers,
 		BufferSizeInGB:       app.fileBufferInGB,
 		SnapshotInterval:     app.snapshotInterval,
@@ -370,9 +370,12 @@ func main() {
 		SnapshotSaver: func(result []float64, rawSnapshot payloadComputation.WorkerPayload, snapshotIDX int) error {
 			return Store(result, rawSnapshot, app.outFolderPath, strconv.FormatInt(int64(snapshotIDX), 10), false)
 		},
+		DebugLog: log.New(ioutil.Discard, "DEBUG ", log.LstdFlags|log.Llongfile),
+		InfoLog:  log.New(os.Stderr, "INFO ", log.LstdFlags),
+		ErrLog:   log.New(os.Stderr, "ERR ", log.LstdFlags|log.Llongfile),
 	}
 
-	workerPayload, err := payloadComputation.Run(mainCtx, traceReader, wfm.Parser{}, config)
+	workerPayload, err := config.Run(mainCtx, traceReader, wfm.Parser{})
 	if err != nil {
 		log.Fatalf("Ttest failed : %v\n", err)
 	}
