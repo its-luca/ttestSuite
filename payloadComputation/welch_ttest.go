@@ -3,15 +3,18 @@ package payloadComputation
 //Implementation of Welch's TTest as a WorkerPayload
 
 import (
+	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sync"
+	"ttestSuite/tPlot"
 )
 
 var ErrOneSetEmpty = errors.New("cannot compute, at least one of the sets is empty")
 
-type WelchTTtest struct {
+type WelchTTest struct {
 	lenFixed             float64
 	lenRandom            float64
 	pwSumFixed           []float64
@@ -19,6 +22,7 @@ type WelchTTtest struct {
 	pwSumOfSquaresFixed  []float64
 	pwSumOfSquaresRandom []float64
 	datapointsPerTrace   int
+	fieldsToSave         []interface{}
 }
 
 //addPwSumFloat64 point wise adds all traces to sum
@@ -51,10 +55,10 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
-//NewBatchMeanAndVar creates a new WelchTTtest instance.
+//NewWelchTTest creates a new WelchTTest instance.
 //All calls to Update must contains exactly datapointsPerTrace entries per trace otherwise we panic
-func NewBatchMeanAndVar(datapointsPerTrace int) WorkerPayload {
-	bmv := &WelchTTtest{
+func NewWelchTTest(datapointsPerTrace int) WorkerPayload {
+	bmv := &WelchTTest{
 		lenFixed:             float64(0),
 		lenRandom:            float64(0),
 		pwSumFixed:           make([]float64, datapointsPerTrace),
@@ -63,19 +67,28 @@ func NewBatchMeanAndVar(datapointsPerTrace int) WorkerPayload {
 		pwSumOfSquaresRandom: make([]float64, datapointsPerTrace),
 		datapointsPerTrace:   datapointsPerTrace,
 	}
+	bmv.fieldsToSave = []interface{}{
+		&bmv.lenFixed,
+		&bmv.lenRandom,
+		&bmv.pwSumFixed,
+		&bmv.pwSumRandom,
+		&bmv.pwSumOfSquaresFixed,
+		&bmv.pwSumOfSquaresRandom,
+		&bmv.datapointsPerTrace,
+	}
 
 	return bmv
 }
 
-func (bmv *WelchTTtest) MaxSubroutines() int {
+func (bmv *WelchTTest) MaxSubroutines() int {
 	return 4
 }
 
-func (bmv *WelchTTtest) Name() string {
+func (bmv *WelchTTest) Name() string {
 	return "Welch's T-Test"
 }
 
-func (bmv *WelchTTtest) Update(fixed, random [][]float64) {
+func (bmv *WelchTTest) Update(fixed, random [][]float64) {
 	bmv.lenFixed += float64(len(fixed))
 	bmv.lenRandom += float64(len(random))
 
@@ -101,7 +114,7 @@ func (bmv *WelchTTtest) Update(fixed, random [][]float64) {
 	wg.Wait()
 }
 
-func (bmv *WelchTTtest) Finalize() ([]float64, error) {
+func (bmv *WelchTTest) Finalize() ([]float64, error) {
 	if bmv.lenRandom == 0 || bmv.lenFixed == 0 {
 		return nil, ErrOneSetEmpty
 	}
@@ -144,8 +157,8 @@ func (bmv *WelchTTtest) Finalize() ([]float64, error) {
 
 }
 
-func (bmv *WelchTTtest) Merge(other WorkerPayload) error {
-	otherAsBMV, ok := other.(*WelchTTtest)
+func (bmv *WelchTTest) Merge(other WorkerPayload) error {
+	otherAsBMV, ok := other.(*WelchTTest)
 	if !ok {
 		return fmt.Errorf("cannot merge %s with %s", bmv.Name(), other.Name())
 	}
@@ -162,8 +175,8 @@ func (bmv *WelchTTtest) Merge(other WorkerPayload) error {
 	return nil
 }
 
-func (bmv *WelchTTtest) DeepCopy() WorkerPayload {
-	res := &WelchTTtest{
+func (bmv *WelchTTest) DeepCopy() WorkerPayload {
+	res := &WelchTTest{
 		lenFixed:             bmv.lenFixed,
 		lenRandom:            bmv.lenRandom,
 		pwSumFixed:           make([]float64, bmv.datapointsPerTrace),
@@ -171,10 +184,56 @@ func (bmv *WelchTTtest) DeepCopy() WorkerPayload {
 		pwSumOfSquaresFixed:  make([]float64, bmv.datapointsPerTrace),
 		pwSumOfSquaresRandom: make([]float64, bmv.datapointsPerTrace),
 		datapointsPerTrace:   bmv.datapointsPerTrace,
+		fieldsToSave:         bmv.fieldsToSave,
 	}
 	copy(res.pwSumFixed, bmv.pwSumFixed)
 	copy(res.pwSumRandom, bmv.pwSumRandom)
 	copy(res.pwSumOfSquaresFixed, bmv.pwSumOfSquaresFixed)
 	copy(res.pwSumOfSquaresRandom, bmv.pwSumOfSquaresRandom)
 	return res
+}
+
+//Encode applies gob to each field of bmv
+func (bmv *WelchTTest) Encode(w io.Writer) error {
+	encoder := gob.NewEncoder(w)
+
+	for _, v := range bmv.fieldsToSave {
+		if err := encoder.Encode(v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+//Decode decodes a WelchTTest that hase been encoded with Encode
+func (bmv *WelchTTest) Decode(r io.Reader) error {
+	decoder := gob.NewDecoder(r)
+	for _, v := range bmv.fieldsToSave {
+		if err := decoder.Decode(v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+//Plot creates a line plot for values with a trace length adaptive threshold line
+//and stores the result in writer. The threshold values are from https://eprint.iacr.org/2017/287.pdf
+func (bmv *WelchTTest) Plot(values []float64, writer io.Writer) error {
+	//trace length dependent threshold values from https://eprint.iacr.org/2017/287.pdf
+	//index 0 trace length 10^2, index 1 trace length 10^3 and so on
+	thresholds := []float64{4.417, 4.892, 5.327, 5.731, 6.110, 6.467, 6.806}
+	if l := float64(bmv.datapointsPerTrace); l == math.Inf(1) || l == 0 || l == math.NaN() || l < 0 {
+		return fmt.Errorf("trace length may not be <0 or +Inf or NaN")
+	}
+	order := math.Log10(float64(bmv.datapointsPerTrace))
+	var threshold float64
+	if order < 2 {
+		threshold = thresholds[0]
+	} else if order > 8 {
+		threshold = thresholds[len(thresholds)-1]
+	} else {
+		threshold = thresholds[int(math.Floor(order-2))]
+	}
+
+	return tPlot.PlotAndStore(values, threshold, writer)
 }

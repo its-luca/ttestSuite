@@ -2,11 +2,14 @@
 //trace file data
 package payloadComputation
 
+import (
+	"fmt"
+	"io"
+)
+
 //Contains interface for WorkerPayload and API to instantiate different functions at runtime
 //If you want to add a new test, implement it using the WorkerPayload interface and add a new mapping
 //to availableTests to make it accessible from the command line
-
-import "fmt"
 
 //WorkerPayloadCreator is the common constructor type for WorkerPayload
 type WorkerPayloadCreator func(datapointsPerTrace int) WorkerPayload
@@ -31,12 +34,19 @@ type WorkerPayload interface {
 	Merge(other WorkerPayload) error
 	//DeepCopy returns a copy of this worker payload and all of its internal state
 	DeepCopy() WorkerPayload
+	Encode(w io.Writer) error
+	Decode(r io.Reader) error
+}
+
+type Plotable interface {
+	//Plot values according to the implementation and store to writer
+	Plot(values []float64, writer io.Writer) error
 }
 
 //availableTests hand edited list of available tests. If you add a new test add
 //it to the list
 var availableTests = map[string]WorkerPayloadCreator{
-	"ttest": WorkerPayloadCreator(NewBatchMeanAndVar),
+	"ttest": WorkerPayloadCreator(NewWelchTTest),
 }
 
 //GetAvailablePayloads returns a slice with all valid payload names

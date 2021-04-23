@@ -307,7 +307,7 @@ func snapshoter(snapshotWg *sync.WaitGroup, maxSnapshotIDX int, shouldQuit <-cha
 					}
 				}
 				recombinedUpTo++
-				_, err := rollingSnapshot.Finalize()
+				snapshotResult, err := rollingSnapshot.Finalize()
 				if err != nil {
 					if errors.Is(err, ErrOneSetEmpty) {
 						log.Printf("cannot finalize snapshotIDX %v, as one of the sets is empty", waitingForResults[i])
@@ -318,9 +318,10 @@ func snapshoter(snapshotWg *sync.WaitGroup, maxSnapshotIDX int, shouldQuit <-cha
 					}
 				}
 				log.Printf("snapshotter: snapshotIDX %v done\n", waitingForResults[i])
-				if err := config.SnapshotSaver(rollingSnapshot.DeepCopy()); err != nil {
+				if err := config.SnapshotSaver(snapshotResult, rollingSnapshot.DeepCopy(), waitingForResults[i]); err != nil {
 					log.Printf("Failed to save snapshotIDX %v : %v\n", waitingForResults[i], err)
 				}
+
 				//don't need it anymore, drop reference to allow garbage collection
 				snapshotDeltaBuf[waitingForResults[i]] = nil
 
@@ -358,7 +359,7 @@ type ComputationConfig struct {
 	//constructor for the WorkerPayload that should be computed
 	WorkerPayloadCreator WorkerPayloadCreator
 	//gets called once the next snapshot is created. Increasing order of snapshots is guaranteed.
-	SnapshotSaver func(snapshot WorkerPayload) error
+	SnapshotSaver func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
 }
 
 //Run performs the parallel computation of the payload denoted by config.WorkerPayloadCreator on the data defined by traceSource and traceParser

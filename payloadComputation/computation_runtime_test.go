@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 	"ttestSuite/mocks"
@@ -57,7 +58,9 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 		BufferSizeInGB:       1,
 		SnapshotInterval:     1,
 		WorkerPayloadCreator: creator,
-		SnapshotSaver:        func(payload WorkerPayload) error { return nil },
+		SnapshotSaver: func(_ []float64, _ WorkerPayload, _ int) error {
+			return nil
+		},
 	}
 
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -82,6 +85,14 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 
 type mockTest struct {
 	sum float64
+}
+
+func (m *mockTest) Encode(_ io.Writer) error {
+	panic("implement me")
+}
+
+func (m *mockTest) Decode(_ io.Reader) error {
+	panic("implement me")
 }
 
 func (m *mockTest) Update(fixed, random [][]float64) {
@@ -205,8 +216,8 @@ func TestTTest_SnapshotValues(t *testing.T) {
 		for workerCount := 1; workerCount < 8; workerCount++ {
 			for _, v := range inputs {
 				gotSnapshotData := make([]WorkerPayload, 0)
-				snapshotSaver := func(s WorkerPayload) error {
-					gotSnapshotData = append(gotSnapshotData, s)
+				snapshotSaver := func(_ []float64, rawSnapshot WorkerPayload, _ int) error {
+					gotSnapshotData = append(gotSnapshotData, rawSnapshot)
 					return nil
 				}
 				config := ComputationConfig{
