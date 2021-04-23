@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"io/ioutil"
+	"log"
 	"math"
 	"path/filepath"
 	"testing"
@@ -73,7 +75,7 @@ func Test_IntegrationTestTTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
-	config := payloadComputation.ComputationConfig{
+	config := payloadComputation.ComputationRuntime{
 		ComputeWorkers:       3,
 		BufferSizeInGB:       1,
 		SnapshotInterval:     1,
@@ -81,9 +83,12 @@ func Test_IntegrationTestTTest(t *testing.T) {
 		SnapshotSaver: func(_ []float64, _ payloadComputation.WorkerPayload, _ int) error {
 			return nil
 		},
+		DebugLog: log.New(io.Discard, "", 0),
+		InfoLog:  log.New(io.Discard, "", 0),
+		ErrLog:   log.New(io.Discard, "", 0),
 	}
 
-	payload, err := payloadComputation.Run(context.Background(), simManyFilesReader, wfm.Parser{}, config)
+	payload, err := config.Run(context.Background(), simManyFilesReader, wfm.Parser{})
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
 	}

@@ -31,6 +31,26 @@ func maxInt(a, b int) int {
 	}
 }
 
+//ComputationRuntime configures resource usage and performed payload computation
+type ComputationRuntime struct {
+	//number of compute workers to spawn; increase if not cpu gated
+	ComputeWorkers int
+	//controls buffer (unit trace files) available to FeederWorkers; increase to fill RAM for max performance
+	BufferSizeInGB int
+	//Amount of files after which a snapshotDeltaShard is created
+	SnapshotInterval int
+	//constructor for the WorkerPayload that should be computed
+	WorkerPayloadCreator WorkerPayloadCreator
+	//gets called once the next snapshot is created. Increasing order of snapshots is guaranteed.
+	SnapshotSaver func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
+	//For detailed status information useful for debugging but not for normal operation
+	DebugLog *log.Logger
+	//For status information that are useful during normal operations but could be omitted
+	InfoLog *log.Logger
+	//For critical warnings and errors that may not be omitted
+	ErrLog *log.Logger
+}
+
 //syncVarsBundle bundles the channels/wait groups required for parallelization
 type syncVarsBundle struct {
 	//feeder writes news jobs, compute workers read; close once both of them are done
@@ -57,12 +77,12 @@ type snapshotDeltaShard struct {
 }
 
 //feederWorker, reads trace files [start,end[ and puts them to job chan
-func feederWorker(ctx context.Context, feederID, start, end int, traceSource traceSource.TraceBlockReader, syncVars syncVarsBundle) {
+func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end int, traceSource traceSource.TraceBlockReader, syncVars syncVarsBundle) {
 	defer func() {
-		log.Printf("Feeder %v done\n", feederID)
+		config.DebugLog.Printf("Feeder done\n")
 		syncVars.wg.Done()
 	}()
-	log.Printf("Feeder %v started on range [%v,%v[\n", feederID, start, end)
+	config.DebugLog.Printf("Feeder started on range [%v,%v[\n", start, end)
 	traceBlockIDX := start
 	metricsTicker := time.NewTicker(5 * time.Second)
 	processedElements := 0
@@ -71,10 +91,10 @@ func feederWorker(ctx context.Context, feederID, start, end int, traceSource tra
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Feeder quits because there was an error")
+			config.ErrLog.Printf("Early feeder quit due to abort signal")
 			return
 		case <-metricsTicker.C:
-			log.Printf("Feeder %v:\t avg read time %v\t avg enq wait %v\t progress %v/%v\n", feederID,
+			config.InfoLog.Printf("Feeder:\t avg read time %v\t avg enq wait %v\t progress %v/%v\n",
 				readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements),
 				traceBlockIDX-start, end-start)
 			processedElements = 0
@@ -115,13 +135,13 @@ func feederWorker(ctx context.Context, feederID, start, end int, traceSource tra
 //computeWorker, consumes wCtx.jobs and adds them the WorkerPayload created by workerPayloadCreator.
 //Every snapshotInterval files a snapshotDeltaShard is published on snapshotResults.
 //In the end the delta to the latest snapshot (if there is any) is published on resultChan.
-func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int, resultChan chan<- WorkerPayload,
-	traceParser wfm.TraceParser, syncVars syncVarsBundle, snapshotResults chan<- snapshotDeltaShard, workerPayloadCreator WorkerPayloadCreator) {
+func (config *ComputationRuntime) computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterval, maxSnapshotIDX int, resultChan chan<- WorkerPayload,
+	traceParser wfm.TraceParser, syncVars syncVarsBundle, snapshotResults chan<- snapshotDeltaShard) {
 	defer func() {
-		log.Printf("Worker %v done\n", workerID)
+		config.DebugLog.Printf("Worker %v done\n", workerID)
 		syncVars.wg.Done()
 	}()
-	log.Printf("Worker %v started\n", workerID)
+	config.DebugLog.Printf("Worker %v started\n", workerID)
 	var frames [][]float64
 	var payload WorkerPayload
 	fixedTraces := make([][]float64, 0, tracesPerFile/2)
@@ -134,13 +154,13 @@ func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterva
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Worker %v received error message and is shuttding down\n", workerID)
+			config.ErrLog.Printf("Worker %v quits due to shutdown signal\n", workerID)
 			return
 		case workPackage := <-syncVars.jobs:
 			{
 				//channel has been closed, no more jobs are coming; send results and finish
 				if workPackage == nil {
-					log.Printf("compute worker %v waiting to send result", workerID)
+					config.DebugLog.Printf("compute worker %v waiting to send result", workerID)
 
 					//send either as snapshotDeltaShard or as final result
 					if curSnapshotIDX <= maxSnapshotIDX {
@@ -160,11 +180,11 @@ func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterva
 					return
 				}
 
-				log.Printf("worker %v: processing fileIDX %v\n", workerID, workPackage.fileIDX)
+				config.DebugLog.Printf("worker %v: processing fileIDX %v\n", workerID, workPackage.fileIDX)
 				//if true we won't get any more data contributing to this snapshotDeltaShard and thus can send data and move
 				//on to the next interval
 				if curSnapshotIDX <= maxSnapshotIDX && workPackage.fileIDX >= (curSnapshotIDX*snapshotInterval+snapshotInterval) {
-					log.Printf("worker %v: sending data for snapshotIDX %v : %v files\n", workerID, curSnapshotIDX, filesSinceLastSnapshot)
+					config.DebugLog.Printf("worker %v: sending data for snapshotIDX %v : %v files\n", workerID, curSnapshotIDX, filesSinceLastSnapshot)
 					var buf WorkerPayload
 					if payload != nil {
 						buf = payload.DeepCopy()
@@ -179,7 +199,7 @@ func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterva
 					for workPackage.fileIDX >= (curSnapshotIDX+1)*snapshotInterval {
 						curSnapshotIDX++
 					}
-					log.Printf("worker %v: next snapshotIDX is %v\n", workerID, curSnapshotIDX)
+					config.DebugLog.Printf("worker %v: next snapshotIDX is %v\n", workerID, curSnapshotIDX)
 
 					filesSinceLastSnapshot = 0
 					payload = nil
@@ -205,7 +225,7 @@ func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterva
 
 				//update mean and var values
 				if payload == nil {
-					payload = workerPayloadCreator(len(frames[0]))
+					payload = config.WorkerPayloadCreator(len(frames[0]))
 				}
 
 				payload.Update(fixedTraces, randomTraces)
@@ -216,15 +236,15 @@ func computeWorker(ctx context.Context, workerID, tracesPerFile, snapshotInterva
 					fixedTraces[i] = nil
 				}
 				filesSinceLastSnapshot++
-				log.Printf("worker %v: done processing %v, filesSinceLastSnapshot %v\n", workerID, workPackage.fileIDX, filesSinceLastSnapshot)
+				config.DebugLog.Printf("worker %v: done processing %v, filesSinceLastSnapshot %v\n", workerID, workPackage.fileIDX, filesSinceLastSnapshot)
 
 			}
 		}
 	}
 }
 
-func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX int,
-	deltaShards <-chan snapshotDeltaShard, errorChan chan<- error, finalSnapshot chan<- WorkerPayload, config ComputationConfig) (lastSnapshot WorkerPayload) {
+func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX int,
+	deltaShards <-chan snapshotDeltaShard, errorChan chan<- error, finalSnapshot chan<- WorkerPayload) {
 	defer snapshotWg.Done()
 
 	snapshotDeltaBuf := make([]WorkerPayload, maxSnapshotIDX+1)
@@ -247,14 +267,33 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 		}
 	}()
 
+	statsTicker := time.NewTicker(10 * time.Second)
+	lastTick := time.Now()
+	defer statsTicker.Stop()
+	//accounting for remaining time prediction
+	receivedFilesSinceLastTick := 0
+	remainingFiles := (maxSnapshotIDX + 1) * config.SnapshotInterval
+
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("snapshotter: received shutdown signal\n")
+			config.ErrLog.Printf("snapshoter quitting due to shutdown signal\n")
 			return
+		case tick := <-statsTicker.C:
+			elapsedSeconds := tick.Sub(lastTick).Seconds()
+			if elapsedSeconds == 0 {
+				continue
+			}
+			filesPerSec := float64(receivedFilesSinceLastTick) / tick.Sub(lastTick).Seconds()
+			remainingFiles -= receivedFilesSinceLastTick
+			if filesPerSec > 0 {
+				config.InfoLog.Printf("processed %v files since %v, projecting %v remaining\n", receivedFilesSinceLastTick, lastTick.Format("15:04:05"), time.Duration(float64(remainingFiles)/filesPerSec)*time.Second)
+			}
+			receivedFilesSinceLastTick = 0
+			lastTick = tick
 		case v, ok := <-deltaShards:
 			if !ok {
-				log.Printf("snapshotter: snapshotResultChan has been closed with %v uncompleted snapshots, exiting", uncompletedSnapshots)
+				config.ErrLog.Printf("snapshoter: snapshotResultChan has been closed with %v uncompleted snapshots, exiting", uncompletedSnapshots)
 				return
 			}
 
@@ -262,7 +301,7 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 			if v.processedFiles == 0 {
 				continue
 			}
-			log.Printf("snapshotter: snapshotDeltaShard %v received %v files from %v\n", v.snapshotIDX, v.processedFiles, v.workerID)
+			config.DebugLog.Printf("snapshoter: snapshotDeltaShard %v received %v files from %v\n", v.snapshotIDX, v.processedFiles, v.workerID)
 
 			//add data to snapshotDeltaShard buffer
 			if snapshotDeltaBuf[v.snapshotIDX] == nil {
@@ -274,6 +313,7 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 				}
 			}
 			receivedFilesForSnapshotDelta[v.snapshotIDX] += v.processedFiles
+			receivedFilesSinceLastTick += v.processedFiles
 
 			//this should never happen
 			if receivedFilesForSnapshotDelta[v.snapshotIDX] > config.SnapshotInterval {
@@ -291,7 +331,7 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 			waitingForResults = append(waitingForResults, v.snapshotIDX)
 			//sort in increasing order
 			sort.Sort(sort.IntSlice(waitingForResults))
-			log.Printf("snapshotter: queue before merge try :%v\n", waitingForResults)
+			config.DebugLog.Printf("snapshoter: queue before merge try :%v\n", waitingForResults)
 
 			//check if new results allow us to remove entries
 			i := 0 //need this after loop
@@ -308,16 +348,16 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 				snapshotResult, err := rollingSnapshot.Finalize()
 				if err != nil {
 					if errors.Is(err, ErrOneSetEmpty) {
-						log.Printf("cannot finalize snapshotIDX %v, as one of the sets is empty", waitingForResults[i])
+						config.ErrLog.Printf("cannot produce snapshotIDX %v, as one of the sets is empty", waitingForResults[i])
 						//don't need it anymore, drop reference to allow garbage collection
 						snapshotDeltaBuf[waitingForResults[i]] = nil
 					} else {
 						errorChan <- fmt.Errorf("snapshotter: failed to compute result for snapshotIDX %v : %v", waitingForResults[i], err)
 					}
 				}
-				log.Printf("snapshotter: snapshotIDX %v done\n", waitingForResults[i])
+				config.InfoLog.Printf("snapshoter: snapshotIDX %v done\n", waitingForResults[i])
 				if err := config.SnapshotSaver(snapshotResult, rollingSnapshot.DeepCopy(), waitingForResults[i]); err != nil {
-					log.Printf("Failed to save snapshotIDX %v : %v\n", waitingForResults[i], err)
+					config.ErrLog.Printf("Failed to save snapshotIDX %v : %v\n", waitingForResults[i], err)
 				}
 
 				//don't need it anymore, drop reference to allow garbage collection
@@ -325,13 +365,13 @@ func snapshoter(ctx context.Context, snapshotWg *sync.WaitGroup, maxSnapshotIDX 
 
 				uncompletedSnapshots--
 				if uncompletedSnapshots == 0 {
-					log.Printf("snapshotter is done\n")
+					config.InfoLog.Printf("snapshoter is done\n")
 					return
 				}
 			}
 			//remove processed elements
 			waitingForResults = waitingForResults[i:]
-			log.Printf("snapshotter: queue after merge try :%v\n", waitingForResults)
+			config.DebugLog.Printf("snapshoter: queue after merge try :%v\n", waitingForResults)
 		}
 	}
 }
@@ -346,23 +386,9 @@ type job struct {
 
 var ErrInvSnapInterval = errors.New("snapshot interval larger than trace file count")
 
-//ComputationConfig configures resource usage and performed payload computation
-type ComputationConfig struct {
-	//number of compute workers to spawn; increase if not cpu gated
-	ComputeWorkers int
-	//controls buffer (unit trace files) available to FeederWorkers; increase to fill RAM for max performance
-	BufferSizeInGB int
-	//Amount of files after which a snapshotDeltaShard is created
-	SnapshotInterval int
-	//constructor for the WorkerPayload that should be computed
-	WorkerPayloadCreator WorkerPayloadCreator
-	//gets called once the next snapshot is created. Increasing order of snapshots is guaranteed.
-	SnapshotSaver func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
-}
-
 //Run performs the parallel computation of the payload denoted by config.WorkerPayloadCreator on the data defined by traceSource and traceParser
 //According to config.SnapshotInterval, config.SnapshotSaver is called with periodic snapshots/intermediate results.
-func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser, config ComputationConfig) (WorkerPayload, error) {
+func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSource.TraceBlockReader, traceParser wfm.TraceParser) (WorkerPayload, error) {
 	ctx, cancelCtx := context.WithCancel(ctx)
 	defer cancelCtx()
 
@@ -390,7 +416,7 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 	if traceFileSizeInMB != 0 {
 		jobQueueLen = maxInt(1, (config.BufferSizeInGB*1024)/traceFileSizeInMB)
 	}
-	log.Printf("jobQueueLen %v (buff\n", jobQueueLen)
+	config.InfoLog.Printf("jobQueueLen %v\n", jobQueueLen)
 
 	jobs := make(chan *job, jobQueueLen)
 	errorChan := make(chan error)
@@ -399,13 +425,13 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 	var computeWorkerWg, feederWorkerWg, snapshotWg sync.WaitGroup
 	//0+snapshotInterval is first snapshotDeltaShard point
 	fileIDXThreshForSnapshot := config.SnapshotInterval - 1
-	log.Printf("initial snapshotDeltaShard point is %v\n", fileIDXThreshForSnapshot)
+	config.DebugLog.Printf("initial snapshotDeltaShard point is %v\n", fileIDXThreshForSnapshot)
 	finalSnapshot := make(chan WorkerPayload, 1)
 	maxSnapshotIDX := int(math.Max(0, math.Floor(float64(numTraceFiles)/float64(config.SnapshotInterval))-1))
 
 	//orchestrate snapshots, final snapshot (it it is reached) is published on finalSnapshot channel
 	snapshotWg.Add(1)
-	go snapshoter(ctx, &snapshotWg, maxSnapshotIDX, snapshotDeltaShardChan, errorChan, finalSnapshot, config)
+	go config.snapshoter(ctx, &snapshotWg, maxSnapshotIDX, snapshotDeltaShardChan, errorChan, finalSnapshot)
 
 	//stats ticker
 	statsTicker := time.NewTicker(5 * time.Second)
@@ -416,19 +442,19 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 				return
 			case <-statsTicker.C:
 				{
-					log.Printf("Buffer Usage %v out of %v\n", len(jobs), cap(jobs))
+					config.InfoLog.Printf("Buffer Usage %v out of %v\n", len(jobs), cap(jobs))
 				}
 			}
 		}
 	}()
 
-	computeWorkerCtx := syncVarsBundle{
+	computeWorkerSyncVars := syncVarsBundle{
 		jobs:      jobs,
 		errorChan: errorChan,
 		wg:        &computeWorkerWg,
 	}
 
-	feederWorkerCtx := syncVarsBundle{
+	feederWorkerSyncVars := syncVarsBundle{
 		jobs:      jobs,
 		errorChan: errorChan,
 		wg:        &feederWorkerWg,
@@ -436,20 +462,20 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 
 	//create ComputeWorkers
 	for id := 0; id < config.ComputeWorkers; id++ {
-		computeWorkerCtx.wg.Add(1)
-		go computeWorker(ctx, id, tracesPerFile, config.SnapshotInterval, maxSnapshotIDX, resultChan, traceParser, computeWorkerCtx, snapshotDeltaShardChan, config.WorkerPayloadCreator)
+		computeWorkerSyncVars.wg.Add(1)
+		go config.computeWorker(ctx, id, tracesPerFile, config.SnapshotInterval, maxSnapshotIDX, resultChan, traceParser, computeWorkerSyncVars, snapshotDeltaShardChan)
 	}
 
 	//start feeder, we only support one
-	feederWorkerCtx.wg.Add(1)
-	go feederWorker(ctx, 0, 0, numTraceFiles, traceSource, feederWorkerCtx)
+	feederWorkerSyncVars.wg.Add(1)
+	go config.feederWorker(ctx, 0, numTraceFiles, traceSource, feederWorkerSyncVars)
 
 	//stores the first error send over errorChan
 	var backgroundError error
 	go func() {
 		signaledShutdown := false
 		for recError := range errorChan {
-			log.Printf("Received error : %v", recError)
+			config.ErrLog.Printf("Received error : %v", recError)
 			backgroundError = recError
 			if !signaledShutdown {
 				cancelCtx()
@@ -461,18 +487,19 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 		}
 	}()
 
-	feederWorkerCtx.wg.Wait()
-	log.Printf("feeder finished\n")
+	feederWorkerSyncVars.wg.Wait()
+	config.InfoLog.Printf("feeder finished\n")
 	//all feeders must be done before we can close the jobs chan
 	close(jobs)
-	log.Printf("closed jobs channel, waiting wor compute workers to finish\n")
+	config.InfoLog.Printf("closed jobs channel, waiting wor compute workers to finish\n")
 	//wait for compute workers to finish remaining jobs
-	computeWorkerCtx.wg.Wait()
-	log.Printf("compute workers finished\n")
+	computeWorkerSyncVars.wg.Wait()
+	config.InfoLog.Printf("compute workers finished. Waiting for snapshoter\n")
 	//all workers done, no one can send snapshotDeltaShard results anymore
 	close(snapshotDeltaShardChan)
 	//wait for snapshoter to drain  snapshotDeltaShardChan
 	snapshotWg.Wait()
+	config.InfoLog.Printf("snapshoter finished")
 	close(finalSnapshot)
 	//all workers done, no one can send errors anymore
 	close(errorChan)
@@ -483,7 +510,7 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 		return nil, backgroundError
 	}
 
-	log.Printf("Merging results\n")
+	config.InfoLog.Printf("Merging results\n")
 	var combined WorkerPayload
 	for partialResult := range resultChan {
 		if combined == nil {
@@ -497,7 +524,7 @@ func Run(ctx context.Context, traceSource traceSource.TraceBlockReader, tracePar
 
 	lastSnapshot := <-finalSnapshot
 	if lastSnapshot == nil && combined == nil {
-		return nil, fmt.Errorf("failed to retrive results")
+		return nil, fmt.Errorf("failed to retrieve final result")
 
 	}
 	//this happens if snapshotDeltaShard interval is large than the amount of input blocks

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"testing"
 	"time"
 	"ttestSuite/mocks"
@@ -53,7 +54,7 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
 
-	config := ComputationConfig{
+	config := ComputationRuntime{
 		ComputeWorkers:       2,
 		BufferSizeInGB:       1,
 		SnapshotInterval:     1,
@@ -61,6 +62,9 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 		SnapshotSaver: func(_ []float64, _ WorkerPayload, _ int) error {
 			return nil
 		},
+		DebugLog: log.New(io.Discard, "", 0),
+		InfoLog:  log.New(io.Discard, "", 0),
+		ErrLog:   log.New(io.Discard, "", 0),
 	}
 
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -68,7 +72,7 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	defer testCancel()
 	var tTestErr error
 	go func() {
-		_, tTestErr = Run(context.Background(), mockSource, mockParser, config)
+		_, tTestErr = config.Run(context.Background(), mockSource, mockParser)
 		done <- nil
 	}()
 
@@ -220,15 +224,18 @@ func TestTTest_SnapshotValues(t *testing.T) {
 					gotSnapshotData = append(gotSnapshotData, rawSnapshot)
 					return nil
 				}
-				config := ComputationConfig{
+				config := ComputationRuntime{
 					ComputeWorkers:       workerCount,
 					BufferSizeInGB:       1,
 					SnapshotInterval:     v.intervalSize,
 					WorkerPayloadCreator: createMockTest,
 					SnapshotSaver:        snapshotSaver,
+					DebugLog:             log.New(io.Discard, "", 0),
+					InfoLog:              log.New(io.Discard, "", 0),
+					ErrLog:               log.New(io.Discard, "", 0),
 				}
 
-				gotFinalValue, tTestErr := Run(context.Background(), blockSource, parser, config)
+				gotFinalValue, tTestErr := config.Run(context.Background(), blockSource, parser)
 				if tTestErr != nil {
 					//if we wanted this error we can accept the test at this point
 					if v.wantErr != nil && errors.Is(tTestErr, v.wantErr) {
