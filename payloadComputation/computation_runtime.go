@@ -94,9 +94,11 @@ func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end i
 			config.ErrLog.Printf("Early feeder quit due to abort signal")
 			return
 		case <-metricsTicker.C:
-			config.InfoLog.Printf("Feeder:\t avg read time %v\t avg enq wait %v\t progress %v/%v\n",
-				readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements),
-				traceBlockIDX-start, end-start)
+			if processedElements != 0 {
+				config.InfoLog.Printf("Feeder:\t avg read time %v\t avg enq wait %v\t progress %v/%v\n",
+					readTimeSinceLastTick/time.Duration(processedElements), enqueueWaitSinceLastTick/time.Duration(processedElements),
+					traceBlockIDX-start, end-start)
+			}
 			processedElements = 0
 			readTimeSinceLastTick = 0
 			enqueueWaitSinceLastTick = 0
@@ -284,10 +286,11 @@ func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sy
 			if elapsedSeconds == 0 {
 				continue
 			}
-			filesPerSec := float64(receivedFilesSinceLastTick) / tick.Sub(lastTick).Seconds()
+			filesPerSec := float64(receivedFilesSinceLastTick) / elapsedSeconds
 			remainingFiles -= receivedFilesSinceLastTick
 			if filesPerSec > 0 {
-				config.InfoLog.Printf("processed %v files since %v, projecting %v remaining\n", receivedFilesSinceLastTick, lastTick.Format("15:04:05"), time.Duration(float64(remainingFiles)/filesPerSec)*time.Second)
+				config.InfoLog.Printf("processed %v files since %v, projecting %v remaining\n",
+					receivedFilesSinceLastTick, lastTick.Format("15:04:05"), time.Duration(float64(remainingFiles)/filesPerSec)*time.Second)
 			}
 			receivedFilesSinceLastTick = 0
 			lastTick = tick
