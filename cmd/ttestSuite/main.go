@@ -126,7 +126,7 @@ func StoreRaw(rawPayloadState payloadComputation.WorkerPayload, folderPath, name
 	return gobFile.Sync()
 }
 
-func StoreAsCSV(result []float64, folderPath, nameSuffix string) error {
+func StoreTValuesAsCSV(result []float64, folderPath, nameSuffix string) error {
 	//store result as csv
 	tValuesAsStrings := make([]string, len(result))
 	for i := range result {
@@ -154,7 +154,7 @@ func StoreAsCSV(result []float64, folderPath, nameSuffix string) error {
 func Store(result []float64, rawSnapshot payloadComputation.WorkerPayload, folderPath, suffix string, storeRaw bool) error {
 	errList := make([]error, 0)
 
-	if err := StoreAsCSV(result, folderPath, suffix); err != nil {
+	if err := StoreTValuesAsCSV(result, folderPath, suffix); err != nil {
 		errList = append(errList, fmt.Errorf("failed to sae as csv file : %v", err))
 	}
 	if storeRaw {
@@ -394,6 +394,20 @@ func main() {
 	//Run done, write/plot results
 	if err := Store(resultValues, workerPayload, app.outFolderPath, "final", true); err != nil {
 		log.Fatalf("Failed to store final resutls : %v", err)
+	}
+
+	//quick and dirty save of welcht ttest state as csv
+	tTestState, ok := workerPayload.(*payloadComputation.WelchTTest)
+	if ok {
+		csvStateFile, err := os.Create(filepath.Join(app.outFolderPath, "state-final.csv"))
+		if err != nil {
+			log.Fatalf("failed to create state save file: %v", err)
+		}
+		defer closeWithErrLog(csvStateFile.Name(), csvStateFile)
+		if err := tTestState.WriteToCSV(csvStateFile); err != nil {
+			log.Fatalf("failed to encod Ttest state to csv: %v", err)
+		}
+
 	}
 
 }

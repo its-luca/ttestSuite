@@ -1,6 +1,7 @@
 package mockWFM
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -13,17 +14,15 @@ type WFMFloatParser struct{}
 
 func (m WFMFloatParser) ParseTraces(raw []byte, buffer [][]float64) ([][]float64, error) {
 
-	offset := 0
-	traceCount, byteSize := binary.Uvarint(raw[offset:])
-	if byteSize <= 0 {
-		return nil, fmt.Errorf("failed to parse traceCount field, read only %v bytes expected %v\n", byteSize, binary.Size(traceCount))
+	r := bytes.NewReader(raw)
+	var traceCount, datapointsPerTrace uint64
+	if err := binary.Read(r, binary.LittleEndian, &traceCount); err != nil {
+		return nil, fmt.Errorf("failed to parse traceCount %v", err)
 	}
-	offset += byteSize
-	datapointsPerTrace, byteSize := binary.Uvarint(raw[offset:])
-	if byteSize <= 0 {
-		return nil, fmt.Errorf("failed to parse datapointPerTrace field, read only %v bytes expected %v\n", byteSize, binary.Size(traceCount))
+
+	if err := binary.Read(r, binary.LittleEndian, &datapointsPerTrace); err != nil {
+		return nil, fmt.Errorf("failed to parse datapoints per trace")
 	}
-	offset += byteSize
 	if buffer == nil {
 		buffer = make([][]float64, traceCount)
 	}
@@ -32,12 +31,12 @@ func (m WFMFloatParser) ParseTraces(raw []byte, buffer [][]float64) ([][]float64
 		if buffer[traceIDX] == nil {
 			buffer[traceIDX] = make([]float64, datapointsPerTrace)
 		}
+		var value uint64
 		for datapointIDX := uint64(0); datapointIDX < datapointsPerTrace; datapointIDX++ {
-			value, n := binary.Uvarint(raw[offset:])
-			if n <= 0 {
-				return nil, fmt.Errorf("failed to parse float entry %v in trace %v, read only %v bytes expected %v\n", datapointIDX, traceIDX, byteSize, binary.Size(traceCount))
+			if err := binary.Read(r, binary.LittleEndian, &value); err != nil {
+				return nil, fmt.Errorf("failed to parse float entry %v in trace %v : %v\n", datapointIDX, traceIDX, err)
 			}
-			offset += n
+			//offset += n
 			valueAsFloat := math.Float64frombits(value)
 			buffer[traceIDX][datapointIDX] = valueAsFloat
 		}

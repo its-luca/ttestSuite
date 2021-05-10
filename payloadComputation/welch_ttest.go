@@ -3,11 +3,14 @@ package payloadComputation
 //Implementation of Welch's TTest as a WorkerPayload
 
 import (
+	"encoding/csv"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
+	"reflect"
 	"sync"
 	"ttestSuite/tPlot"
 )
@@ -22,7 +25,6 @@ type WelchTTest struct {
 	pwSumOfSquaresFixed  []float64
 	pwSumOfSquaresRandom []float64
 	datapointsPerTrace   int
-	fieldsToSave         []interface{}
 }
 
 //addPwSumFloat64 point wise adds all traces to sum
@@ -67,7 +69,12 @@ func NewWelchTTest(datapointsPerTrace int) WorkerPayload {
 		pwSumOfSquaresRandom: make([]float64, datapointsPerTrace),
 		datapointsPerTrace:   datapointsPerTrace,
 	}
-	bmv.fieldsToSave = []interface{}{
+
+	return bmv
+}
+
+func (bmv *WelchTTest) genFieldToSaveSlice() []interface{} {
+	return []interface{}{
 		&bmv.lenFixed,
 		&bmv.lenRandom,
 		&bmv.pwSumFixed,
@@ -76,8 +83,6 @@ func NewWelchTTest(datapointsPerTrace int) WorkerPayload {
 		&bmv.pwSumOfSquaresRandom,
 		&bmv.datapointsPerTrace,
 	}
-
-	return bmv
 }
 
 func (bmv *WelchTTest) MaxSubroutines() int {
@@ -184,7 +189,6 @@ func (bmv *WelchTTest) DeepCopy() WorkerPayload {
 		pwSumOfSquaresFixed:  make([]float64, bmv.datapointsPerTrace),
 		pwSumOfSquaresRandom: make([]float64, bmv.datapointsPerTrace),
 		datapointsPerTrace:   bmv.datapointsPerTrace,
-		fieldsToSave:         bmv.fieldsToSave,
 	}
 	copy(res.pwSumFixed, bmv.pwSumFixed)
 	copy(res.pwSumRandom, bmv.pwSumRandom)
@@ -193,11 +197,53 @@ func (bmv *WelchTTest) DeepCopy() WorkerPayload {
 	return res
 }
 
+//just temporary until snapshot and resume branch is done
+func storeAsCSV(v []float64, w io.Writer) error {
+	//convert slice to strings
+	vAsString := make([]string, len(v))
+	for i := range v {
+		vAsString[i] = fmt.Sprintf("%f", v[i])
+	}
+
+	csvWriter := csv.NewWriter(w)
+	if err := csvWriter.Write(vAsString); err != nil {
+		return fmt.Errorf("csv write failed: %v", err)
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		return fmt.Errorf("csv write failed: %v", err)
+	}
+	return nil
+}
+
+func (bmv *WelchTTest) WriteToCSV(w io.Writer) error {
+	for _, v := range bmv.genFieldToSaveSlice() {
+		if floatV, ok := v.(*float64); ok {
+			if err := storeAsCSV([]float64{*floatV}, w); err != nil {
+				return err
+			}
+		} else if sliceV, ok := v.(*[]float64); ok {
+			if err := storeAsCSV(*sliceV, w); err != nil {
+				return err
+			}
+		} else if intV, ok := v.(*int); ok {
+			if err := storeAsCSV([]float64{float64(*intV)}, w); err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("encountered field unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+	log.Printf("len fixed : %v", bmv.lenFixed)
+	log.Printf("First pwSumFixed entries are: %v", bmv.pwSumFixed[:10])
+	return nil
+}
+
 //Encode applies gob to each field of bmv
 func (bmv *WelchTTest) Encode(w io.Writer) error {
 	encoder := gob.NewEncoder(w)
 
-	for _, v := range bmv.fieldsToSave {
+	for _, v := range bmv.genFieldToSaveSlice() {
 		if err := encoder.Encode(v); err != nil {
 			return err
 		}
@@ -208,7 +254,7 @@ func (bmv *WelchTTest) Encode(w io.Writer) error {
 //Decode decodes a WelchTTest that hase been encoded with Encode
 func (bmv *WelchTTest) Decode(r io.Reader) error {
 	decoder := gob.NewDecoder(r)
-	for _, v := range bmv.fieldsToSave {
+	for _, v := range bmv.genFieldToSaveSlice() {
 		if err := decoder.Decode(v); err != nil {
 			return err
 		}

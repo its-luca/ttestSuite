@@ -45,35 +45,34 @@ func ParseCSVToFloat64(csvData []byte) ([][]float64, error) {
 
 //CreateFloatSourceParserPair creates a block reader and parser with len(blocksAsFloats) blocks where block nr x
 //contains the traces blocksAsFloat[x]. If failAfter is >= 0 the block reader will fail for each number greater than failAfter
-func CreateFloatSourceParserPair(blocksAsFloat [][][]float64, caseDataPerBlock [][]int, failAfter int) (traceSource.TraceBlockReader, wfm.TraceParser) {
-
-	//parse dimension and calculate size of single binary block
+func CreateFloatSourceParserPair(blocksAsFloat [][][]float64, caseDataPerBlock [][]int, failAfter int) (traceSource.TraceBlockReader, wfm.TraceParser, error) {
 	traceCount := uint64(len(blocksAsFloat[0]))
-	binarySize := uint64(binary.Size(traceCount))
 	var datapointsPerTrace uint64
 	if traceCount == 0 {
 		datapointsPerTrace = 0
-		binarySize += uint64(binary.Size(datapointsPerTrace))
 	} else {
 		datapointsPerTrace = uint64(len(blocksAsFloat[0][0]))
-		binarySize += uint64(binary.Size(datapointsPerTrace))
-		binarySize += (traceCount + datapointsPerTrace) * uint64(binary.Size(blocksAsFloat[0][0][0]))
 	}
-
 	//create binary blocks
 	binBlocks := make([][]byte, len(blocksAsFloat))
 	for blockIDX := 0; blockIDX < len(blocksAsFloat); blockIDX++ {
-		binBlocks[blockIDX] = make([]byte, binarySize)
-		offset := 0
-		offset += binary.PutUvarint(binBlocks[blockIDX][offset:], traceCount)
-		offset += binary.PutUvarint(binBlocks[blockIDX][offset:], datapointsPerTrace)
+		buff := &bytes.Buffer{}
+		if err := binary.Write(buff, binary.LittleEndian, traceCount); err != nil {
+			return nil, nil, fmt.Errorf("failed to write traceCount : %v", err)
+		}
+		if err := binary.Write(buff, binary.LittleEndian, datapointsPerTrace); err != nil {
+			return nil, nil, fmt.Errorf("failed to write datapointsPerTrace : %v", err)
+		}
 		for traceIDX := uint64(0); traceIDX < traceCount; traceIDX++ {
 			for datapointIDX := uint64(0); datapointIDX < datapointsPerTrace; datapointIDX++ {
 				v := blocksAsFloat[blockIDX][traceIDX][datapointIDX]
 				vAsBits := math.Float64bits(v)
-				offset += binary.PutUvarint(binBlocks[blockIDX][offset:], vAsBits)
+				if err := binary.Write(buff, binary.LittleEndian, vAsBits); err != nil {
+					return nil, nil, fmt.Errorf("failed to write float entry %v : %v", datapointIDX, err)
+				}
 			}
 		}
+		binBlocks[blockIDX] = buff.Bytes()
 	}
 
 	reader := &mockTraceSource.MockBlockReader{
@@ -84,5 +83,5 @@ func CreateFloatSourceParserPair(blocksAsFloat [][][]float64, caseDataPerBlock [
 	}
 	parser := &mockWFM.WFMFloatParser{}
 
-	return reader, parser
+	return reader, parser, nil
 }
