@@ -165,7 +165,10 @@ func TestTTest_SnapshotValues(t *testing.T) {
 		{0},
 	}
 
-	blockSource, parser := mocks.CreateFloatSourceParserPair(blocks, caseDataPerBlock, -1)
+	blockSource, parser, err := mocks.CreateFloatSourceParserPair(blocks, caseDataPerBlock, -1)
+	if err != nil {
+		t.Fatalf("failed to setup blockSource and parser for test : %v", err)
+	}
 
 	type testInput struct {
 		wantSnapshotValues [][]float64
