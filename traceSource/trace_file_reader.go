@@ -18,6 +18,20 @@ type TraceFileReader struct {
 	idToFileName func(id int) string
 }
 
+//NewReversedTraceFileReader assumes "trace (x).wfm" with x in [1,totalFileCount] as the naming scheme
+//but accesses the files in reverse order, e.g. GetBlock(0) will return the content of "trace (totalFileCount).wfm"
+func NewReversedTraceFileReader(fileCount int, folderPath, caseFileName string) (*TraceFileReader, error) {
+	reader, err := NewDefaultTraceFileReader(fileCount, folderPath, caseFileName)
+	if err != nil {
+		return nil, err
+	}
+	reader.idToFileName = func(id int) string {
+		//note that the numbers in the file names are in [1,totalFilesCount], so NO -1
+		return fmt.Sprintf("trace (%v).wfm", reader.totalFileCount-id)
+	}
+	return reader, nil
+}
+
 //NewDefaultTraceFileReader assumes "trace (x).wfm" with x in [1,totalFileCount] as the naming scheme
 func NewDefaultTraceFileReader(fileCount int, folderPath, caseFileName string) (*TraceFileReader, error) {
 	tfr := &TraceFileReader{
