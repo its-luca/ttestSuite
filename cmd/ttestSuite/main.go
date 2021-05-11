@@ -30,15 +30,17 @@ import (
 
 //application bundles the command line configuration options
 type application struct {
-	pathTraceFolder      string
-	traceFileCount       int
-	pathCaseLogFile      string
-	numWorkers           int
-	fileBufferInGB       int
-	streamFromAddr       string
-	outFolderPath        string
-	tTestThreshold       float64
-	snapshotInterval     int
+	pathTraceFolder  string
+	traceFileCount   int
+	pathCaseLogFile  string
+	numWorkers       int
+	fileBufferInGB   int
+	streamFromAddr   string
+	outFolderPath    string
+	tTestThreshold   float64
+	snapshotInterval int
+	//if set and streamFromAddr = "", use reader accessing the files in reverse order
+	reverseOrder         bool
 	workerPayloadCreator payloadComputation.WorkerPayloadCreator
 }
 
@@ -200,6 +202,7 @@ func ParseAndValidateFlags() (*application, error) {
 	tTestThreshold := cmdFlags.Float64("tTestThresh", 6, "Threshold value for t-test plot")
 	snapshotInterval := cmdFlags.Int("snapshotInterval", 0, "Save intermediate result every x trace files")
 	payloadName := cmdFlags.String("payloadComputation", "ttest", fmt.Sprintf("Choose which of the following computation should be performed on the data: %s", payloadComputation.GetAvailablePayloads()))
+	reverseOrder := cmdFlags.Bool("reverseOrder", false, "Access trace files in reversed order. Not applicable to streaming mode.")
 	var workerPayloadCreator payloadComputation.WorkerPayloadCreator
 	cmdFlags.PrintDefaults()
 
@@ -266,6 +269,11 @@ func ParseAndValidateFlags() (*application, error) {
 			return
 		}
 
+		if *reverseOrder && *streamFromAddr != "" {
+			descriptiveError = fmt.Errorf("reversed order is not available in streaming mode")
+			return
+		}
+
 		return descriptiveError
 	}()
 
@@ -284,6 +292,7 @@ func ParseAndValidateFlags() (*application, error) {
 		tTestThreshold:       *tTestThreshold,
 		snapshotInterval:     *snapshotInterval,
 		workerPayloadCreator: workerPayloadCreator,
+		reverseOrder:         *reverseOrder,
 	}, nil
 
 }
@@ -305,7 +314,12 @@ func main() {
 	var traceReader traceSource.TraceBlockReader
 	if app.streamFromAddr == "" {
 		var err error
-		traceReader, err = traceSource.NewDefaultTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile))
+		if app.reverseOrder {
+			traceReader, err = traceSource.NewReversedTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile))
+		} else {
+			traceReader, err = traceSource.NewDefaultTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile))
+
+		}
 		if err != nil {
 			log.Fatalf("Failed to create trace file reader : %v", err)
 		}
