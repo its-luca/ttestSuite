@@ -314,12 +314,7 @@ func main() {
 	var traceReader traceSource.TraceBlockReader
 	if app.streamFromAddr == "" {
 		var err error
-		if app.reverseOrder {
-			traceReader, err = traceSource.NewReversedTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile))
-		} else {
-			traceReader, err = traceSource.NewDefaultTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile))
-
-		}
+		traceReader, err = traceSource.NewDefaultTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile), app.reverseOrder)
 		if err != nil {
 			log.Fatalf("Failed to create trace file reader : %v", err)
 		}

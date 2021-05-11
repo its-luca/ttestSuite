@@ -311,7 +311,7 @@ func main() {
 	}
 	log.Printf("first  entries are %v\n", state.pwMeanFixed[:10])
 
-	traceReader, err := traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*nameCaseLogFile))
+	traceReader, err := traceSource.NewDefaultTraceFileReader(*traceFileCount, *pathTraceFolder, filepath.Base(*nameCaseLogFile), false)
 	if err != nil {
 		log.Fatalf("Failed to create trace file reader : %v", err)
 	}
