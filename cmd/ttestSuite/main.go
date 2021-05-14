@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"github.com/pbnjay/memory"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	"io"
 	"io/ioutil"
 	"log"
@@ -371,19 +373,40 @@ func main() {
 	}
 
 	//Call Run function
-
-	config := payloadComputation.ComputationRuntime{
-		ComputeWorkers:       app.numWorkers,
-		BufferSizeInGB:       app.fileBufferInGB,
-		SnapshotInterval:     app.snapshotInterval,
-		WorkerPayloadCreator: app.workerPayloadCreator,
-		SnapshotSaver: func(result []float64, rawSnapshot payloadComputation.WorkerPayload, snapshotIDX int) error {
-			return Store(result, rawSnapshot, app.outFolderPath, strconv.FormatInt(int64(snapshotIDX), 10), false)
-		},
-		DebugLog: log.New(ioutil.Discard, "DEBUG ", log.LstdFlags|log.Llongfile),
-		InfoLog:  log.New(os.Stderr, "INFO ", log.LstdFlags),
-		ErrLog:   log.New(os.Stderr, "ERR ", log.LstdFlags|log.Llongfile),
+	saveSnapshotsFunc := func(result []float64, rawSnapshot payloadComputation.WorkerPayload, snapshotIDX int) error {
+		return Store(result, rawSnapshot, app.outFolderPath, strconv.FormatInt(int64(snapshotIDX), 10), false)
 	}
+	config, err := payloadComputation.NewComputationRuntime(app.numWorkers, app.fileBufferInGB, app.snapshotInterval,
+		app.workerPayloadCreator, saveSnapshotsFunc,
+		log.New(ioutil.Discard, "DEBUG ", log.LstdFlags|log.Llongfile),
+		log.New(os.Stderr, "INFO ", log.LstdFlags),
+		log.New(os.Stderr, "ERR ", log.LstdFlags|log.Llongfile),
+	)
+	if err != nil {
+		log.Fatalf("Failed to setup computation runtime : %v", err)
+	}
+
+	//Setup Metrics
+	metricsTicker := time.NewTicker(5 * time.Second)
+	go func() {
+		processMetrics := prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{})
+		goMetrics := prometheus.NewGoCollector()
+		for {
+			select {
+			case <-mainCtx.Done():
+				return
+			case <-metricsTicker.C:
+				err := push.New("http://localhost:9091", "ttestSuite").
+					Gatherer(config.MetricsRegistry).
+					Collector(processMetrics).
+					Collector(goMetrics).
+					Push()
+				if err != nil {
+					fmt.Printf("failed to push metrics : %v", err)
+				}
+			}
+		}
+	}()
 
 	workerPayload, err := config.Run(mainCtx, traceReader, wfm.Parser{})
 	if err != nil {

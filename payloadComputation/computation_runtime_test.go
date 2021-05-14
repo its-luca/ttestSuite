@@ -53,18 +53,13 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
-
-	config := ComputationRuntime{
-		ComputeWorkers:       2,
-		BufferSizeInGB:       1,
-		SnapshotInterval:     1,
-		WorkerPayloadCreator: creator,
-		SnapshotSaver: func(_ []float64, _ WorkerPayload, _ int) error {
+	config, err := NewComputationRuntime(2, 1, 1, creator,
+		func(_ []float64, _ WorkerPayload, _ int) error {
 			return nil
 		},
-		DebugLog: log.New(io.Discard, "", 0),
-		InfoLog:  log.New(io.Discard, "", 0),
-		ErrLog:   log.New(io.Discard, "", 0),
+		log.New(io.Discard, "", 0), log.New(io.Discard, "", 0), log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("Failed to setup computation runtiem for test : %v", err)
 	}
 
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -227,15 +222,10 @@ func TestTTest_SnapshotValues(t *testing.T) {
 					gotSnapshotData = append(gotSnapshotData, rawSnapshot)
 					return nil
 				}
-				config := ComputationRuntime{
-					ComputeWorkers:       workerCount,
-					BufferSizeInGB:       1,
-					SnapshotInterval:     v.intervalSize,
-					WorkerPayloadCreator: createMockTest,
-					SnapshotSaver:        snapshotSaver,
-					DebugLog:             log.New(io.Discard, "", 0),
-					InfoLog:              log.New(io.Discard, "", 0),
-					ErrLog:               log.New(io.Discard, "", 0),
+				config, err := NewComputationRuntime(workerCount, 1, v.intervalSize, createMockTest,
+					snapshotSaver, log.New(io.Discard, "", 0), log.New(io.Discard, "", 0), log.New(io.Discard, "", 0))
+				if err != nil {
+					t.Fatalf("Failed to setup computation runtime for test : %v", err)
 				}
 
 				gotFinalValue, tTestErr := config.Run(context.Background(), blockSource, parser)
