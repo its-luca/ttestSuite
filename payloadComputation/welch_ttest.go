@@ -71,8 +71,7 @@ func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 	return sum
 }
 
-//addPwSumOfSquaresFloat64 point wise adds the square of all trace datapoints to sum
-func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
+func addPwSumAndSumSQFloat64Mul(sum, sumSQ []float64, traces [][]float64) ([]float64, []float64) {
 	if len(traces) > 1 {
 		if len(traces[0]) != len(sum) {
 			panic(fmt.Sprintf("sum has len %v but trace has length %v", len(sum), len(traces[0])))
@@ -80,10 +79,11 @@ func addPwSumOfSquaresFloat64(sum []float64, traces [][]float64) []float64 {
 	}
 	for traceIDX := range traces {
 		for pointIDX := range traces[traceIDX] {
-			sum[pointIDX] += math.Pow(traces[traceIDX][pointIDX], 2)
+			sum[pointIDX] += traces[traceIDX][pointIDX]
+			sumSQ[pointIDX] += traces[traceIDX][pointIDX] * traces[traceIDX][pointIDX]
 		}
 	}
-	return sum
+	return sum, sumSQ
 }
 
 //NewWelchTTest creates a new WelchTTest instance.
@@ -113,26 +113,16 @@ func (bmv *WelchTTest) Name() string {
 func (bmv *WelchTTest) Update(fixed, random [][]float64) {
 	bmv.lenFixed += float64(len(fixed))
 	bmv.lenRandom += float64(len(random))
-
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		bmv.pwSumFixed = addPwSumFloat64(bmv.pwSumFixed, fixed)
+		bmv.pwSumFixed, bmv.pwSumOfSquaresFixed = addPwSumAndSumSQFloat64Mul(bmv.pwSumFixed, bmv.pwSumOfSquaresFixed, fixed)
 	}()
 	go func() {
 		defer wg.Done()
-		bmv.pwSumRandom = addPwSumFloat64(bmv.pwSumRandom, random)
+		bmv.pwSumRandom, bmv.pwSumOfSquaresRandom = addPwSumAndSumSQFloat64Mul(bmv.pwSumRandom, bmv.pwSumOfSquaresRandom, random)
 	}()
-	go func() {
-		defer wg.Done()
-		bmv.pwSumOfSquaresFixed = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresFixed, fixed)
-	}()
-	go func() {
-		defer wg.Done()
-		bmv.pwSumOfSquaresRandom = addPwSumOfSquaresFloat64(bmv.pwSumOfSquaresRandom, random)
-	}()
-
 	wg.Wait()
 }
 
