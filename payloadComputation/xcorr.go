@@ -1,7 +1,9 @@
 package payloadComputation
 
 import (
+	"context"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"math"
 	"math/big"
 )
@@ -32,7 +34,7 @@ func dotProductFloat64(a, b []float64) (float64, error) {
 	for i := range a {
 		sum += a[i] * b[i]
 		if sum < oldSum {
-			return 0, fmt.Errorf("overfow")
+			return 0, fmt.Errorf("overflow")
 		} else {
 			oldSum = sum
 		}
@@ -72,4 +74,75 @@ func NormalizedCrossCorrelateAgainstTotal(a []float64, b []float64) (*big.Float,
 		return nil, err
 	}
 	return Rab.Quo(Rab, Raa.Sqrt(Raa.Mul(Raa, Rbb))), nil
+}
+
+type xCorrJob struct {
+	referenceTrace []float64
+	trace          []float64
+	resPTR         *float64
+}
+
+//computeCorrelation, computes correlation between s.pwMeanFixed and all the fixed case traces returned by traceReader
+func computeCorrelation(ctx context.Context, workerCount int, refereceTrace []float64, traces [][]float64) ([]float64, error) {
+
+	if len(traces) == 0 {
+		return nil, fmt.Errorf("traces is empty")
+	}
+	//float64 ok as the normalized value is small; DO NOT CHANGE SIZE as we use pointers to
+	//individual elements to store results in the  worker function
+	normalizedCorrelationValues := make([]float64, len(traces))
+
+	workers, ctx := errgroup.WithContext(ctx)
+
+	//fed by decoder, processed by workers
+	jobs := make(chan xCorrJob)
+
+	//spawn workers
+	for i := 0; i < workerCount; i++ {
+		workers.Go(func() error {
+			for j := range jobs {
+				corr, err := NormalizedCrossCorrelateAgainstTotal(j.referenceTrace, j.trace)
+				if err != nil {
+					return fmt.Errorf("failed to calc correlation : %v", err)
+				}
+				//write back result
+				floatCorr, _ := corr.Float64()
+				*(j.resPTR) = floatCorr
+
+				/*
+					corr, err := NormalizedCrossCorrelateFloat64AgainstTotal(j.referenceTrace,j.trace)
+					if err != nil {
+						return fmt.Errorf("failed to calc correlation : %v", err)
+					}
+					*(j.resPTR) = corr
+				*/
+			}
+			return nil
+		})
+	}
+
+	//feed jobs
+	traceIDX := 0
+	for traceIDX < len(traces) {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+			jobs <- xCorrJob{
+				referenceTrace: refereceTrace,
+				trace:          traces[traceIDX],
+				resPTR:         &(normalizedCorrelationValues[traceIDX]),
+			}
+			traceIDX++
+		}
+	}
+	close(jobs)
+
+	if err := workers.Wait(); err != nil {
+		return nil, fmt.Errorf("error in worker or abort signal from os: %v", err)
+	}
+	if traceIDX != len(traces) {
+		return nil, fmt.Errorf("aborted due to cancelled context")
+	}
+	return normalizedCorrelationValues, nil
 }
