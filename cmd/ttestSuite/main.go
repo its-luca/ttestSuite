@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -44,6 +45,7 @@ type application struct {
 	//if set and streamFromAddr = "", use reader accessing the files in reverse order
 	reverseOrder         bool
 	workerPayloadCreator payloadComputation.WorkerPayloadCreator
+	metricsPushAddrStr   string
 }
 
 //closeWithErrLog is a helper that calls Close on c and prints a log message if an error occurs
@@ -205,6 +207,7 @@ func ParseAndValidateFlags() (*application, error) {
 	snapshotInterval := cmdFlags.Int("snapshotInterval", 0, "Save intermediate result every x trace files")
 	payloadName := cmdFlags.String("payloadComputation", "ttest", fmt.Sprintf("Choose which of the following computation should be performed on the data: %s", payloadComputation.GetAvailablePayloads()))
 	reverseOrder := cmdFlags.Bool("reverseOrder", false, "Access trace files in reversed order. Not applicable to streaming mode.")
+	metrics := cmdFlags.String("metrics", "", "Set to ip:port of prometheus pushgateway to enable metrics")
 	var workerPayloadCreator payloadComputation.WorkerPayloadCreator
 	cmdFlags.PrintDefaults()
 
@@ -276,6 +279,12 @@ func ParseAndValidateFlags() (*application, error) {
 			return
 		}
 
+		if *metrics != "" {
+			if _, err := url.Parse(*metrics); err != nil {
+				descriptiveError = fmt.Errorf("%s is not a valid URL : %v", *metrics, err)
+			}
+		}
+
 		return descriptiveError
 	}()
 
@@ -295,6 +304,7 @@ func ParseAndValidateFlags() (*application, error) {
 		snapshotInterval:     *snapshotInterval,
 		workerPayloadCreator: workerPayloadCreator,
 		reverseOrder:         *reverseOrder,
+		metricsPushAddrStr:   *metrics,
 	}, nil
 
 }
@@ -387,26 +397,28 @@ func main() {
 	}
 
 	//Setup Metrics
-	metricsTicker := time.NewTicker(5 * time.Second)
-	go func() {
-		processMetrics := prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{})
-		goMetrics := prometheus.NewGoCollector()
-		for {
-			select {
-			case <-mainCtx.Done():
-				return
-			case <-metricsTicker.C:
-				err := push.New("http://localhost:9091", "ttestSuite").
-					Gatherer(config.MetricsRegistry).
-					Collector(processMetrics).
-					Collector(goMetrics).
-					Push()
-				if err != nil {
-					fmt.Printf("failed to push metrics : %v", err)
+	if app.metricsPushAddrStr != "" {
+		metricsTicker := time.NewTicker(5 * time.Second)
+		go func() {
+			processMetrics := prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{})
+			goMetrics := prometheus.NewGoCollector()
+			for {
+				select {
+				case <-mainCtx.Done():
+					return
+				case <-metricsTicker.C:
+					err := push.New(app.metricsPushAddrStr, "ttestSuite").
+						Gatherer(config.MetricsRegistry).
+						Collector(processMetrics).
+						Collector(goMetrics).
+						Push()
+					if err != nil {
+						fmt.Printf("failed to push metrics : %v", err)
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	workerPayload, err := config.Run(mainCtx, traceReader, wfm.Parser{})
 	if err != nil {

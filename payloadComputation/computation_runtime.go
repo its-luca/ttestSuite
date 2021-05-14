@@ -61,6 +61,9 @@ type ComputationRuntime struct {
 	MetrInputFileCount           prometheus.Gauge
 	MetrReadFilesCount           prometheus.Counter
 	MetrProcessedFilesCount      prometheus.Counter
+	MetrInputBufferFreeSlots     prometheus.Gauge
+	MetrQQBufferFreeSlots        prometheus.Gauge
+	MetrSnapshotterWaitQueueSize prometheus.Gauge
 }
 
 func NewComputationRuntime(computeWorkers, bufferSizeInGB, snapshotInterval int, wpc WorkerPayloadCreator, ss SnapshotSaverFunc,
@@ -98,6 +101,15 @@ func NewComputationRuntime(computeWorkers, bufferSizeInGB, snapshotInterval int,
 			Name: "ttestsuite_compr_processed_files_count",
 			Help: "Amount of files fully processed",
 		}),
+		MetrInputBufferFreeSlots: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_input_queue_free_slots",
+		}),
+		MetrQQBufferFreeSlots: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_qq_queue_free_slots",
+		}),
+		MetrSnapshotterWaitQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_ss_wait_queue_size",
+		}),
 	}
 
 	cfg.MetricsRegistry.MustRegister(cfg.MetrMaxTestValue)
@@ -106,6 +118,9 @@ func NewComputationRuntime(computeWorkers, bufferSizeInGB, snapshotInterval int,
 	cfg.MetricsRegistry.MustRegister(cfg.MetrInputFileCount)
 	cfg.MetricsRegistry.MustRegister(cfg.MetrReadFilesCount)
 	cfg.MetricsRegistry.MustRegister(cfg.MetrProcessedFilesCount)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrInputBufferFreeSlots)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrQQBufferFreeSlots)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrSnapshotterWaitQueueSize)
 
 	return cfg, nil
 }
@@ -190,6 +205,8 @@ func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end i
 				enqueueWaitSinceLastTick += time.Since(startTime)
 				processedElements++
 				config.MetrReadFilesCount.Inc()
+				config.MetrInputBufferFreeSlots.Set(float64(cap(syncVars.jobs) - len(syncVars.jobs)))
+				config.MetrQQBufferFreeSlots.Set(float64(cap(qualityControlJobs) - len(qualityControlJobs)))
 				traceBlockIDX++
 			}
 		}
@@ -200,7 +217,7 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 	errorChan chan error, jobs <-chan *job, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	const sampleStepSize = 30
+	const sampleStepSize = 10
 	filesInPrefix := int(math.Round(float64(totalFileCount) * (config.prefixSizeInPercent / 100)))
 	lenFixed := float64(0)
 	lenRandom := float64(0)
@@ -265,31 +282,38 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 			} else {
 				minXCorrFixed := float64(1) //values is in [0,1] , so this is max
 				minXCorrRandom := float64(1)
-				for _, t := range bufferFixed {
-					bf, err := NormalizedCrossCorrelateAgainstTotal(prefixMeanFixed, t)
-					if err != nil {
-						errorChan <- fmt.Errorf("qualityControl failed to calc xcorr: %v : len(prefixMeanFixed)=%v , len(t)=%v", err, len(prefixMeanFixed), len(t))
+				var xCorrErr error
+				for i := 0; xCorrErr != nil && i < len(bufferFixed); i++ {
+					var bf float64
+					bf, xCorrErr = NormalizedCrossCorrelateFloat64AgainstTotal(prefixMeanFixed, bufferFixed[i])
+					if xCorrErr != nil {
+						config.ErrLog.Printf("qualityControl failed to calc xcorr: %v : len(prefixMeanFixed)=%v , len(t)=%v", err, len(prefixMeanFixed), len(bufferFixed[i]))
 					} else {
-						corr, _ := bf.Float64()
-						if minXCorrFixed > corr {
-							minXCorrFixed = corr
+						if minXCorrFixed > bf {
+							minXCorrFixed = bf
 						}
 					}
 
 				}
-				for _, t := range bufferRandom {
-					bf, err := NormalizedCrossCorrelateAgainstTotal(prefixMeanRandom, t)
-					if err != nil {
-						errorChan <- fmt.Errorf("qualityControl failed to calc xcorr: %v : len(prefixMeanRandom)=%v , len(t)=%v", err, len(prefixMeanRandom), len(t))
+				for i := 0; xCorrErr != nil && i < len(bufferRandom); i++ {
+					var bf float64
+					bf, xCorrErr = NormalizedCrossCorrelateFloat64AgainstTotal(prefixMeanRandom, bufferRandom[i])
+					if xCorrErr != nil {
+						config.ErrLog.Printf("qualityControl failed to calc xcorr: %v : len(prefixMeanRandom)=%v , len(t)=%v", err, len(prefixMeanRandom), len(bufferRandom[i]))
 					} else {
-						corr, _ := bf.Float64()
-						if minXCorrRandom > corr {
-							minXCorrRandom = corr
+						if minXCorrRandom > bf {
+							minXCorrRandom = bf
 						}
 					}
 				}
-				config.MetrXCorrAgainstFixedPrefix.Set(minXCorrFixed)
-				config.MetrXCorrAgainstRandomPrefix.Set(minXCorrRandom)
+				if xCorrErr != nil {
+					config.MetrXCorrAgainstRandomPrefix.Set(-1)
+					config.MetrXCorrAgainstFixedPrefix.Set(-1)
+				} else {
+					config.MetrXCorrAgainstFixedPrefix.Set(minXCorrFixed)
+					config.MetrXCorrAgainstRandomPrefix.Set(minXCorrRandom)
+				}
+
 			}
 			bufferRandom = bufferRandom[:0]
 			bufferFixed = bufferFixed[:0]
@@ -550,6 +574,7 @@ func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sy
 			//remove processed elements
 			waitingForResults = waitingForResults[i:]
 			config.DebugLog.Printf("snapshoter: queue after merge try :%v\n", waitingForResults)
+			config.MetrSnapshotterWaitQueueSize.Set(float64(len(waitingForResults)))
 		}
 	}
 }
