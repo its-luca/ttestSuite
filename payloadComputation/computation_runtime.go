@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"log"
 	"math"
 	"sort"
@@ -31,6 +32,8 @@ func maxInt(a, b int) int {
 	}
 }
 
+type SnapshotSaverFunc func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
+
 //ComputationRuntime configures resource usage and performed payload computation
 type ComputationRuntime struct {
 	//number of compute workers to spawn; increase if not cpu gated
@@ -42,13 +45,69 @@ type ComputationRuntime struct {
 	//constructor for the WorkerPayload that should be computed
 	WorkerPayloadCreator WorkerPayloadCreator
 	//gets called once the next snapshot is created. Increasing order of snapshots is guaranteed.
-	SnapshotSaver func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
+	SnapshotSaver SnapshotSaverFunc
 	//For detailed status information useful for debugging but not for normal operation
 	DebugLog *log.Logger
 	//For status information that are useful during normal operations but could be omitted
 	InfoLog *log.Logger
 	//For critical warnings and errors that may not be omitted
 	ErrLog *log.Logger
+	//prometheus metrics
+	MetricsRegistry              *prometheus.Registry
+	MetrMaxTestValue             prometheus.Gauge
+	prefixSizeInPercent          float64
+	MetrXCorrAgainstFixedPrefix  prometheus.Gauge
+	MetrXCorrAgainstRandomPrefix prometheus.Gauge
+	MetrInputFileCount           prometheus.Gauge
+	MetrReadFilesCount           prometheus.Counter
+	MetrProcessedFilesCount      prometheus.Counter
+}
+
+func NewComputationRuntime(computeWorkers, bufferSizeInGB, snapshotInterval int, wpc WorkerPayloadCreator, ss SnapshotSaverFunc,
+	debugLog, infoLog, errLog *log.Logger) (*ComputationRuntime, error) {
+	cfg := &ComputationRuntime{
+		ComputeWorkers:       computeWorkers,
+		BufferSizeInGB:       bufferSizeInGB,
+		SnapshotInterval:     snapshotInterval,
+		WorkerPayloadCreator: wpc,
+		SnapshotSaver:        ss,
+		DebugLog:             debugLog,
+		InfoLog:              infoLog,
+		ErrLog:               errLog,
+		MetricsRegistry:      prometheus.NewRegistry(),
+		MetrMaxTestValue: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_max_test_value",
+			Help: "Highest value of WorkerPayload result in the latest snapshot",
+		}),
+		prefixSizeInPercent: 5,
+		MetrXCorrAgainstFixedPrefix: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_xcorr_against_fixed_prefix",
+		}),
+		MetrXCorrAgainstRandomPrefix: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_xcorr_against_random_prefix",
+		}),
+		MetrInputFileCount: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ttestsuite_compr_input_file_count",
+			Help: "Amount of input files that are supposed to be processed",
+		}),
+		MetrReadFilesCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ttestsuite_compr_read_files_count",
+			Help: "Amount of files read by the feeder",
+		}),
+		MetrProcessedFilesCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ttestsuite_compr_processed_files_count",
+			Help: "Amount of files fully processed",
+		}),
+	}
+
+	cfg.MetricsRegistry.MustRegister(cfg.MetrMaxTestValue)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrXCorrAgainstFixedPrefix)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrXCorrAgainstRandomPrefix)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrInputFileCount)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrReadFilesCount)
+	cfg.MetricsRegistry.MustRegister(cfg.MetrProcessedFilesCount)
+
+	return cfg, nil
 }
 
 //syncVarsBundle bundles the channels/wait groups required for parallelization
@@ -77,7 +136,8 @@ type snapshotDeltaShard struct {
 }
 
 //feederWorker, reads trace files [start,end[ and puts them to job chan
-func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end int, traceSource traceSource.TraceBlockReader, syncVars syncVarsBundle) {
+func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end int, traceSource traceSource.TraceBlockReader, syncVars syncVarsBundle,
+	qualityControlJobs chan<- *job) {
 	defer func() {
 		config.DebugLog.Printf("Feeder done\n")
 		syncVars.wg.Done()
@@ -126,10 +186,114 @@ func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end i
 				readTimeSinceLastTick += time.Since(startTime)
 				startTime = time.Now()
 				syncVars.jobs <- flb
+				qualityControlJobs <- flb
 				enqueueWaitSinceLastTick += time.Since(startTime)
 				processedElements++
+				config.MetrReadFilesCount.Inc()
 				traceBlockIDX++
 			}
+		}
+	}
+}
+
+func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileCount, traceLength int, parser wfm.TraceParser,
+	errorChan chan error, jobs <-chan *job, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	const sampleStepSize = 30
+	filesInPrefix := int(math.Round(float64(totalFileCount) * (config.prefixSizeInPercent / 100)))
+	lenFixed := float64(0)
+	lenRandom := float64(0)
+	prefixSumFixed := make([]float64, traceLength)
+	prefixSumRandom := make([]float64, traceLength)
+	bufferFixed := make([][]float64, 0)
+	bufferRandom := make([][]float64, 0)
+	var prefixMeanRandom []float64
+	var prefixMeanFixed []float64
+	var parsedTracesBuf [][]float64
+	config.MetrXCorrAgainstRandomPrefix.Set(-1)
+	config.MetrXCorrAgainstFixedPrefix.Set(-1)
+	for {
+		select {
+		case <-ctx.Done():
+			config.ErrLog.Printf("Early qualityControl exit due to arbort signal")
+			return
+		case j, ok := <-jobs:
+			if !ok { //channel closed
+				return
+			}
+			//if we are not building the prefix anymore, check if we wan to process file
+			//for small inputs filesInPrefix may be 0 in which case we will always skip
+			if filesInPrefix == 0 || (j.fileIDX > filesInPrefix && (j.fileIDX%sampleStepSize != 0)) {
+				continue
+			}
+
+			var err error
+			parsedTracesBuf, err = parser.ParseTraces(j.file, parsedTracesBuf)
+			if err != nil {
+				errorChan <- fmt.Errorf("qualityControl failed to parse files %v : %v", j.fileIDX, err)
+			}
+
+			//cluster to case marker
+			for i := range parsedTracesBuf {
+				caseMarker := j.subCaseLog[i]
+				if caseMarker == 0 {
+					bufferFixed = append(bufferFixed, parsedTracesBuf[i])
+				} else if caseMarker == 1 {
+					bufferRandom = append(bufferRandom, parsedTracesBuf[i])
+				} else {
+					errorChan <- fmt.Errorf("qualityControl hit unexpected case marker : %v", caseMarker)
+					return
+				}
+			}
+
+			if j.fileIDX < filesInPrefix {
+				addPwSumFloat64(prefixSumFixed, bufferFixed)
+				lenFixed += float64(len(bufferFixed))
+				addPwSumFloat64(prefixSumRandom, bufferRandom)
+				lenRandom += float64(len(bufferRandom))
+				//if this file completes the prefix, create means
+				if j.fileIDX == (filesInPrefix - 1) {
+					for i := 0; i < traceLength; i++ {
+						prefixSumFixed[i] /= lenFixed
+						prefixSumRandom[i] /= lenRandom
+					}
+					prefixMeanFixed = prefixSumFixed
+					prefixMeanRandom = prefixSumRandom
+					config.InfoLog.Printf("Finised building prefix for xcorr tests")
+				}
+			} else {
+				minXCorrFixed := float64(1) //values is in [0,1] , so this is max
+				minXCorrRandom := float64(1)
+				for _, t := range bufferFixed {
+					bf, err := NormalizedCrossCorrelateAgainstTotal(prefixMeanFixed, t)
+					if err != nil {
+						errorChan <- fmt.Errorf("qualityControl failed to calc xcorr: %v : len(prefixMeanFixed)=%v , len(t)=%v", err, len(prefixMeanFixed), len(t))
+					} else {
+						corr, _ := bf.Float64()
+						if minXCorrFixed > corr {
+							minXCorrFixed = corr
+						}
+					}
+
+				}
+				for _, t := range bufferRandom {
+					bf, err := NormalizedCrossCorrelateAgainstTotal(prefixMeanRandom, t)
+					if err != nil {
+						errorChan <- fmt.Errorf("qualityControl failed to calc xcorr: %v : len(prefixMeanRandom)=%v , len(t)=%v", err, len(prefixMeanRandom), len(t))
+					} else {
+						corr, _ := bf.Float64()
+						if minXCorrRandom > corr {
+							minXCorrRandom = corr
+						}
+					}
+				}
+				config.MetrXCorrAgainstFixedPrefix.Set(minXCorrFixed)
+				config.MetrXCorrAgainstRandomPrefix.Set(minXCorrRandom)
+			}
+			bufferRandom = bufferRandom[:0]
+			bufferFixed = bufferFixed[:0]
+
 		}
 	}
 }
@@ -238,6 +402,7 @@ func (config *ComputationRuntime) computeWorker(ctx context.Context, workerID, t
 					fixedTraces[i] = nil
 				}
 				filesSinceLastSnapshot++
+				config.MetrProcessedFilesCount.Inc()
 				config.DebugLog.Printf("worker %v: done processing %v, filesSinceLastSnapshot %v\n", workerID, workPackage.fileIDX, filesSinceLastSnapshot)
 
 			}
@@ -363,6 +528,16 @@ func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sy
 					config.ErrLog.Printf("Failed to save snapshotIDX %v : %v\n", waitingForResults[i], err)
 				}
 
+				//Start Metrics Update
+				maxValue := float64(0)
+				for i := range snapshotResult {
+					if maxValue < snapshotResult[i] {
+						maxValue = snapshotResult[i]
+					}
+				}
+				config.MetrMaxTestValue.Set(maxValue)
+				//End of Metrics Update
+
 				//don't need it anymore, drop reference to allow garbage collection
 				snapshotDeltaBuf[waitingForResults[i]] = nil
 
@@ -400,16 +575,19 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 		return nil, ErrInvSnapInterval
 	}
 
+	config.MetrInputFileCount.Set(float64(numTraceFiles))
+
 	//access first block to parse number of traces per file (which is assumed to be the same for all files)
 	testFile, _, err := traceSource.GetBlock(0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read test file : %v", err)
 	}
 
-	tracesPerFile, err := traceParser.GetNumberOfTraces(testFile)
+	parsedTestFile, err := traceParser.ParseTraces(testFile, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine traces per file : %v", err)
 	}
+	tracesPerFile := len(parsedTestFile)
 	fmt.Printf("Traces per file: %v\n", tracesPerFile)
 
 	//Derive the amount of RAM to be used for the job buffer
@@ -422,6 +600,7 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 	config.InfoLog.Printf("jobQueueLen %v\n", jobQueueLen)
 
 	jobs := make(chan *job, jobQueueLen)
+	qualityControlJobs := make(chan *job, jobQueueLen)
 	errorChan := make(chan error)
 	resultChan := make(chan WorkerPayload, config.ComputeWorkers)
 	snapshotDeltaShardChan := make(chan snapshotDeltaShard, config.ComputeWorkers)
@@ -463,6 +642,12 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 		wg:        &feederWorkerWg,
 	}
 
+	//create quality control worker
+	computeWorkerWg.Add(1)
+	datapointsPerTrace := len(parsedTestFile[0])
+	go config.qualityControl(ctx, numTraceFiles, datapointsPerTrace, wfm.Parser{}, errorChan, qualityControlJobs,
+		&computeWorkerWg)
+
 	//create ComputeWorkers
 	for id := 0; id < config.ComputeWorkers; id++ {
 		computeWorkerSyncVars.wg.Add(1)
@@ -471,7 +656,7 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 
 	//start feeder, we only support one
 	feederWorkerSyncVars.wg.Add(1)
-	go config.feederWorker(ctx, 0, numTraceFiles, traceSource, feederWorkerSyncVars)
+	go config.feederWorker(ctx, 0, numTraceFiles, traceSource, feederWorkerSyncVars, qualityControlJobs)
 
 	//stores the first error send over errorChan
 	var backgroundError error
@@ -494,6 +679,7 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 	config.InfoLog.Printf("feeder finished\n")
 	//all feeders must be done before we can close the jobs chan
 	close(jobs)
+	close(qualityControlJobs)
 	config.InfoLog.Printf("closed jobs channel, waiting wor compute workers to finish\n")
 	//wait for compute workers to finish remaining jobs
 	computeWorkerSyncVars.wg.Wait()

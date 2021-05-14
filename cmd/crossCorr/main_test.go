@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 	"ttestSuite/mocks"
+	"ttestSuite/payloadComputation"
 )
 
 //floatEqUpTo returns true if abs(a-b)<=maxDiff
@@ -70,7 +71,7 @@ func Test_crossCorrelateAgainstTotal(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NormalizedCrossCorrelateAgainstTotal(tt.args.pwMeansTotal, tt.args.singleTrace)
+			got, err := payloadComputation.NormalizedCrossCorrelateAgainstTotal(tt.args.pwMeansTotal, tt.args.singleTrace)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NormalizedCrossCorrelateAgainstTotal() error = %v, wantErr %v", err, tt.wantErr)
 				return

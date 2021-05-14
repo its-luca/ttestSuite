@@ -8,46 +8,15 @@ import (
 	"golang.org/x/sync/errgroup"
 	"io"
 	"log"
-	"math/big"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"ttestSuite/payloadComputation"
 	"ttestSuite/traceSource"
 	"ttestSuite/wfm"
 )
-
-//dotProduct computes the dot product of a and b. If they have different lengths an error is returned
-func dotProduct(a, b []float64) (*big.Float, error) {
-	if len(a) != len(b) {
-		return nil, fmt.Errorf("slices have different lenghts")
-	}
-	prod := big.NewFloat(0)
-	tmp := big.NewFloat(0)
-	for i := range a {
-		tmp.SetFloat64(a[i] * b[i])
-		prod.Add(prod, tmp)
-	}
-	return prod, nil
-}
-
-//NormalizedCrossCorrelateAgainstTotal implements matlab's xcorr(a,b,0,'normalized')
-func NormalizedCrossCorrelateAgainstTotal(a []float64, b []float64) (*big.Float, error) {
-	Rab, err := dotProduct(a, b)
-	if err != nil {
-		return nil, err
-	}
-	Raa, err := dotProduct(a, a)
-	if err != nil {
-		return nil, err
-	}
-	Rbb, err := dotProduct(b, b)
-	if err != nil {
-		return nil, err
-	}
-	return Rab.Quo(Rab, Raa.Sqrt(Raa.Mul(Raa, Rbb))), nil
-}
 
 type partialTTestState struct {
 	pwMeanFixed  []float64
@@ -161,7 +130,7 @@ func computeCorrelation(traceReader traceSource.TraceBlockReader, parser wfm.Tra
 	for i := 0; i < runtime.NumCPU()-2; i++ {
 		workers.Go(func() error {
 			for j := range jobs {
-				corr, err := NormalizedCrossCorrelateAgainstTotal(j.pwMeanFixed, j.trace)
+				corr, err := payloadComputation.NormalizedCrossCorrelateAgainstTotal(j.pwMeanFixed, j.trace)
 				if err != nil {
 					log.Printf("wokrer failed to calc corr: %v", err)
 					return fmt.Errorf("failed to calc correlation : %v", err)

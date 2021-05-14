@@ -75,17 +75,16 @@ func Test_IntegrationTestTTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
-	config := payloadComputation.ComputationRuntime{
-		ComputeWorkers:       3,
-		BufferSizeInGB:       1,
-		SnapshotInterval:     1,
-		WorkerPayloadCreator: creator,
-		SnapshotSaver: func(_ []float64, _ payloadComputation.WorkerPayload, _ int) error {
+	config, err := payloadComputation.NewComputationRuntime(3, 1, 1, creator,
+		func(_ []float64, _ payloadComputation.WorkerPayload, _ int) error {
 			return nil
 		},
-		DebugLog: log.New(io.Discard, "", 0),
-		InfoLog:  log.New(io.Discard, "", 0),
-		ErrLog:   log.New(io.Discard, "", 0),
+		log.New(io.Discard, "", 0),
+		log.New(io.Discard, "", 0),
+		log.New(io.Discard, "", 0),
+	)
+	if err != nil {
+		t.Fatalf("Failed to setup computation runtime for test : %v", err)
 	}
 
 	payload, err := config.Run(context.Background(), simManyFilesReader, wfm.Parser{})
