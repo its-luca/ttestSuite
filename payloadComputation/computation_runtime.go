@@ -32,6 +32,19 @@ func maxInt(a, b int) int {
 	}
 }
 
+func minFloat64Slice(a []float64) float64 {
+	if len(a) == 1 {
+		return a[0]
+	}
+	min := a[0]
+	for i := 1; i < len(a); i++ {
+		if min > a[i] {
+			min = a[i]
+		}
+	}
+	return min
+}
+
 type SnapshotSaverFunc func(result []float64, rawSnapshot WorkerPayload, snapshotIDX int) error
 
 //ComputationRuntime configures resource usage and performed payload computation
@@ -224,7 +237,7 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 	errorChan chan error, jobs <-chan *job, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	const sampleStepSize = 10
+	const sampleStepSize = 10 //TODO: make configureable
 	filesInPrefix := int(math.Round(float64(totalFileCount) * (config.prefixSizeInPercent / 100)))
 	lenFixed := float64(0)
 	lenRandom := float64(0)
@@ -256,6 +269,7 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 			parsedTracesBuf, err = parser.ParseTraces(j.file, parsedTracesBuf)
 			if err != nil {
 				errorChan <- fmt.Errorf("qualityControl failed to parse files %v : %v", j.fileIDX, err)
+				return
 			}
 
 			//cluster to case marker
@@ -284,43 +298,31 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 					}
 					prefixMeanFixed = prefixSumFixed
 					prefixMeanRandom = prefixSumRandom
-					config.InfoLog.Printf("Finised building prefix for xcorr tests")
+					config.InfoLog.Printf("Finished building prefix for xcorr tests")
 				}
 			} else {
+				config.InfoLog.Printf("Updating xCorr values")
 				minXCorrFixed := float64(1) //values is in [0,1] , so this is max
 				minXCorrRandom := float64(1)
-				var xCorrErr error
-				for i := 0; xCorrErr != nil && i < len(bufferFixed); i++ {
-					var bf float64
-					bf, xCorrErr = NormalizedCrossCorrelateFloat64AgainstTotal(prefixMeanFixed, bufferFixed[i])
-					if xCorrErr != nil {
-						config.ErrLog.Printf("qualityControl failed to calc xcorr: %v : len(prefixMeanFixed)=%v , len(t)=%v", err, len(prefixMeanFixed), len(bufferFixed[i]))
-					} else {
-						if minXCorrFixed > bf {
-							minXCorrFixed = bf
-						}
-					}
-
-				}
-				for i := 0; xCorrErr != nil && i < len(bufferRandom); i++ {
-					var bf float64
-					bf, xCorrErr = NormalizedCrossCorrelateFloat64AgainstTotal(prefixMeanRandom, bufferRandom[i])
-					if xCorrErr != nil {
-						config.ErrLog.Printf("qualityControl failed to calc xcorr: %v : len(prefixMeanRandom)=%v , len(t)=%v", err, len(prefixMeanRandom), len(bufferRandom[i]))
-					} else {
-						if minXCorrRandom > bf {
-							minXCorrRandom = bf
-						}
-					}
-				}
-				if xCorrErr != nil {
-					config.MetrXCorrAgainstRandomPrefix.Set(-1)
+				xcorrFixed, err := computeCorrelation(ctx, 4, prefixMeanFixed, bufferFixed)
+				if err != nil {
+					config.ErrLog.Printf("qualityControl failed to calc xcorr against fixed : %v", err)
 					config.MetrXCorrAgainstFixedPrefix.Set(-1)
+
 				} else {
+					minXCorrFixed = math.Min(minXCorrFixed, minFloat64Slice(xcorrFixed))
 					config.MetrXCorrAgainstFixedPrefix.Set(minXCorrFixed)
+				}
+
+				xcorrRandom, err := computeCorrelation(ctx, 4, prefixMeanRandom, bufferRandom)
+				if err != nil {
+					config.ErrLog.Printf("qualityControl failed to calc xcorr against random : %v", err)
+					config.MetrXCorrAgainstRandomPrefix.Set(-1)
+				} else {
+					minXCorrRandom = math.Min(minXCorrRandom, minFloat64Slice(xcorrRandom))
 					config.MetrXCorrAgainstRandomPrefix.Set(minXCorrRandom)
 				}
-
+				config.InfoLog.Printf("Done updating xCorr values")
 			}
 			bufferRandom = bufferRandom[:0]
 			bufferFixed = bufferFixed[:0]
