@@ -86,6 +86,10 @@ type mockTest struct {
 	sum float64
 }
 
+func (m *mockTest) Reset() {
+	m.sum = 0
+}
+
 func (m *mockTest) Encode(_ io.Writer) error {
 	panic("implement me")
 }

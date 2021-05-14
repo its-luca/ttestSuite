@@ -169,12 +169,6 @@ func Store(result []float64, rawSnapshot payloadComputation.WorkerPayload, folde
 		}
 	}
 
-	if plotable, ok := rawSnapshot.(payloadComputation.Plotable); ok {
-		if err := StorePlot(result, plotable, folderPath, suffix); err != nil {
-			errList = append(errList, fmt.Errorf("failed to plot: %v", err))
-		}
-	}
-
 	if len(errList) == 0 {
 		return nil
 	}
@@ -265,6 +259,8 @@ func ParseAndValidateFlags() (*application, error) {
 		//set default value, may be changed by file name collision avoidance system
 		if *outFolderPath == "" {
 			*outFolderPath = fmt.Sprintf("%s-results", filepath.Base(*pathTraceFolder))
+		} else {
+			*outFolderPath = filepath.Join(*outFolderPath, filepath.Base(*pathTraceFolder))
 		}
 
 		var err error

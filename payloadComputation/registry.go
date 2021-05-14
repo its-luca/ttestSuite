@@ -32,6 +32,9 @@ type WorkerPayload interface {
 	//Merge updates the state of this WorkerPayload with the one of other (equal to calling Update on all data
 	//that has been added to other)
 	Merge(other WorkerPayload) error
+	//Reset the internal state to it's initial values to be equal to the state of an object created by the
+	//constructor called with the same arguments
+	Reset()
 	//DeepCopy returns a copy of this worker payload and all of its internal state
 	DeepCopy() WorkerPayload
 	Encode(w io.Writer) error

@@ -27,6 +27,35 @@ type WelchTTest struct {
 	datapointsPerTrace   int
 }
 
+func (bmv *WelchTTest) genFieldToSaveSlice() []interface{} {
+	return []interface{}{
+		&bmv.lenFixed,
+		&bmv.lenRandom,
+		&bmv.pwSumFixed,
+		&bmv.pwSumRandom,
+		&bmv.pwSumOfSquaresFixed,
+		&bmv.pwSumOfSquaresRandom,
+		&bmv.datapointsPerTrace,
+	}
+}
+
+func (bmv *WelchTTest) Reset() {
+	bmv.lenFixed = 0
+	bmv.lenRandom = 0
+	for i := range bmv.pwSumFixed {
+		bmv.pwSumFixed[i] = 0
+	}
+	for i := range bmv.pwSumRandom {
+		bmv.pwSumRandom[i] = 0
+	}
+	for i := range bmv.pwSumOfSquaresFixed {
+		bmv.pwSumOfSquaresFixed[i] = 0
+	}
+	for i := range bmv.pwSumOfSquaresRandom {
+		bmv.pwSumOfSquaresRandom[i] = 0
+	}
+}
+
 //addPwSumFloat64 point wise adds all traces to sum
 func addPwSumFloat64(sum []float64, traces [][]float64) []float64 {
 	if len(traces) > 1 {
@@ -71,18 +100,6 @@ func NewWelchTTest(datapointsPerTrace int) WorkerPayload {
 	}
 
 	return bmv
-}
-
-func (bmv *WelchTTest) genFieldToSaveSlice() []interface{} {
-	return []interface{}{
-		&bmv.lenFixed,
-		&bmv.lenRandom,
-		&bmv.pwSumFixed,
-		&bmv.pwSumRandom,
-		&bmv.pwSumOfSquaresFixed,
-		&bmv.pwSumOfSquaresRandom,
-		&bmv.datapointsPerTrace,
-	}
 }
 
 func (bmv *WelchTTest) MaxSubroutines() int {
@@ -170,13 +187,38 @@ func (bmv *WelchTTest) Merge(other WorkerPayload) error {
 	bmv.lenFixed += otherAsBMV.lenFixed
 	bmv.lenRandom += otherAsBMV.lenRandom
 
-	for i := 0; i < bmv.datapointsPerTrace; i++ {
-		bmv.pwSumOfSquaresRandom[i] += otherAsBMV.pwSumOfSquaresRandom[i]
-		bmv.pwSumOfSquaresFixed[i] += otherAsBMV.pwSumOfSquaresFixed[i]
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < bmv.datapointsPerTrace; i++ {
+			bmv.pwSumOfSquaresRandom[i] += otherAsBMV.pwSumOfSquaresRandom[i]
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < bmv.datapointsPerTrace; i++ {
+			bmv.pwSumOfSquaresFixed[i] += otherAsBMV.pwSumOfSquaresFixed[i]
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < bmv.datapointsPerTrace; i++ {
+			bmv.pwSumRandom[i] += otherAsBMV.pwSumRandom[i]
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < bmv.datapointsPerTrace; i++ {
 
-		bmv.pwSumRandom[i] += otherAsBMV.pwSumRandom[i]
-		bmv.pwSumFixed[i] += otherAsBMV.pwSumFixed[i]
-	}
+			bmv.pwSumFixed[i] += otherAsBMV.pwSumFixed[i]
+		}
+	}()
+
+	wg.Wait()
 	return nil
 }
 
