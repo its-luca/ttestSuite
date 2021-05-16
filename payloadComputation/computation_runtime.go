@@ -585,11 +585,10 @@ func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sy
 				if err != nil {
 					if errors.Is(err, ErrOneSetEmpty) {
 						config.ErrLog.Printf("cannot produce snapshotIDX %v, as one of the sets is empty", waitingForResults[i])
-						//don't need it anymore,put back into pool
-						config.workerPayloadPool.Put(snapshotDeltaBuf[waitingForResults[i]])
-						snapshotDeltaBuf[waitingForResults[i]] = nil //drop reference for potential gargabe collection
+						//reference to snapshotDeltaBuf[waitingForResults[i]] will be dropped at end of loop
 					} else {
 						errorChan <- fmt.Errorf("snapshotter: failed to compute result for snapshotIDX %v : %v", waitingForResults[i], err)
+						return
 					}
 				}
 				config.InfoLog.Printf("snapshoter: snapshotIDX %v done\n", waitingForResults[i])
