@@ -130,7 +130,7 @@ func computeCorrelation(traceReader traceSource.TraceBlockReader, parser wfm.Tra
 	for i := 0; i < runtime.NumCPU()-2; i++ {
 		workers.Go(func() error {
 			for j := range jobs {
-				corr, err := payloadComputation.NormalizedCrossCorrelateAgainstTotal(j.pwMeanFixed, j.trace)
+				corr, err := payloadComputation.NormalizedCrossCorrelationBig(j.pwMeanFixed, j.trace)
 				if err != nil {
 					log.Printf("wokrer failed to calc corr: %v", err)
 					return fmt.Errorf("failed to calc correlation : %v", err)
@@ -266,13 +266,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open output file : %v", err)
 	}
-	defer outFile.Close()
+	defer func() {
+		if err := outFile.Close(); err != nil {
+			log.Printf("Failed to close outFile : %v", err)
+		}
+	}()
 
 	csvStateFile, err := os.Open(*pathCSVStateFile)
 	if err != nil {
 		log.Fatalf("Failed to open csv partialTTestState file : %v", err)
 	}
-	defer csvStateFile.Close()
+	defer func() {
+		if err := csvStateFile.Close(); err != nil {
+			log.Printf("Failed to close csvStateFile : %v", err)
+		}
+	}()
 
 	state, err := loadMeansFromTTestStateCSV(csvStateFile)
 	if err != nil {
