@@ -227,7 +227,7 @@ func ParseAndValidateFlags() (*application, error) {
 
 		if *snapshotInterval == 0 { //means not specified by user, only do one snapshot
 			*snapshotInterval = *traceFileCount
-		} else if *snapshotInterval > *traceFileCount {
+		} else if *streamFromAddr == "" && *snapshotInterval > *traceFileCount {
 			descriptiveError = fmt.Errorf("snapshot interval may not be large than the number of trace files (%v)", *traceFileCount)
 			return
 		}
@@ -353,6 +353,10 @@ func main() {
 
 		//wait for the measure script to send the start command
 		app.traceFileCount, filenameUpdates = receiver.WaitForMeasureStart(mainCtx)
+		if app.snapshotInterval > app.traceFileCount {
+			log.Fatalf("snapshot interval may not be larger than the number of trace files (%v)", app.traceFileCount)
+			return
+		}
 
 		traceReader = traceSource.NewStreamingTraceFileReader(app.traceFileCount, app.pathTraceFolder, filepath.Base(app.pathCaseLogFile), filenameUpdates)
 	}
