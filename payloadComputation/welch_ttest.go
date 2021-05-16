@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"reflect"
 	"sync"
@@ -266,8 +265,6 @@ func (bmv *WelchTTest) WriteToCSV(w io.Writer) error {
 			return fmt.Errorf("encountered field unexpected type %v", reflect.TypeOf(v))
 		}
 	}
-	log.Printf("len fixed : %v", bmv.lenFixed)
-	log.Printf("First pwSumFixed entries are: %v", bmv.pwSumFixed[:10])
 	return nil
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 import requests
 import time
-nframes=1
+nframes=20
 
 acq=0
 r = requests.post('http://localhost:8080/start',json={"TotalNumberOfTraceFiles":nframes})
@@ -14,7 +14,7 @@ sendingDisabled=False
 while acq < nframes:
 	print('simulate gathering data from scope...')
 	time.sleep(2)
-	fileName = 'trace (1).wfm'
+	fileName = './testData/trace (1).wfm'
 	print('done\n')
 
 	print('sending data')
