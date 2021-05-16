@@ -53,33 +53,38 @@ func TestTTest_CleanShutdownAfterReaderCrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
 	}
-	config, err := NewComputationRuntime(2, 1, 1, creator,
-		func(_ []float64, _ WorkerPayload, _ int) error {
-			return nil
-		},
-		log.New(io.Discard, "", 0), log.New(io.Discard, "", 0), log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatalf("Failed to setup computation runtiem for test : %v", err)
-	}
 
-	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	done := make(chan interface{})
-	defer testCancel()
-	var tTestErr error
-	go func() {
-		_, tTestErr = config.Run(context.Background(), mockSource, mockParser)
-		done <- nil
-	}()
-
-	select {
-	case <-testCtx.Done():
-		t.Errorf("TTtest is stuck upon unexpected TraceReader crash (on a very slow target this can be false positive, adjust timeout)")
-	case <-done: //ttest call returned
-		if tTestErr == nil {
-			t.Errorf("expected error got none")
+	//repeat test multiple times to increase likelihood of detecting racy behaviour
+	for testRunIDX := 0; testRunIDX < 100; testRunIDX++ {
+		config, err := NewComputationRuntime(2, 1, 1, creator,
+			func(_ []float64, _ WorkerPayload, _ int) error {
+				return nil
+			},
+			log.New(io.Discard, "", 0), log.New(io.Discard, "", 0), log.New(io.Discard, "", 0))
+		if err != nil {
+			t.Fatalf("Failed to setup computation runtiem for test : %v", err)
 		}
 
+		testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		done := make(chan interface{})
+		defer testCancel()
+		var tTestErr error
+		go func() {
+			_, tTestErr = config.Run(context.Background(), mockSource, mockParser)
+			done <- nil
+		}()
+
+		select {
+		case <-testCtx.Done():
+			t.Errorf("TTtest is stuck upon unexpected TraceReader crash (on a very slow target this can be false positive, adjust timeout)")
+		case <-done: //ttest call returned
+			if tTestErr == nil {
+				t.Errorf("expected error got none")
+			}
+
+		}
 	}
+
 }
 
 type mockTest struct {
