@@ -304,7 +304,7 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 				config.InfoLog.Printf("Updating xCorr values")
 				minXCorrFixed := float64(1) //values is in [0,1] , so this is max
 				minXCorrRandom := float64(1)
-				xcorrFixed, err := computeCorrelation(ctx, 4, prefixMeanFixed, bufferFixed)
+				xcorrFixed, err := ComputeCorrelation(ctx, 4, prefixMeanFixed, bufferFixed)
 				if err != nil {
 					config.ErrLog.Printf("qualityControl failed to calc xcorr against fixed : %v", err)
 					config.MetrXCorrAgainstFixedPrefix.Set(-1)
@@ -314,7 +314,7 @@ func (config *ComputationRuntime) qualityControl(ctx context.Context, totalFileC
 					config.MetrXCorrAgainstFixedPrefix.Set(minXCorrFixed)
 				}
 
-				xcorrRandom, err := computeCorrelation(ctx, 4, prefixMeanRandom, bufferRandom)
+				xcorrRandom, err := ComputeCorrelation(ctx, 4, prefixMeanRandom, bufferRandom)
 				if err != nil {
 					config.ErrLog.Printf("qualityControl failed to calc xcorr against random : %v", err)
 					config.MetrXCorrAgainstRandomPrefix.Set(-1)
@@ -625,7 +625,7 @@ func (config *ComputationRuntime) Run(ctx context.Context, traceSource traceSour
 	}
 	tracesPerFile := len(parsedTestFile)
 	datapointsPerTrace := len(parsedTestFile[0])
-	fmt.Printf("Traces per file: %v\n", tracesPerFile)
+	config.InfoLog.Printf("Traces per file: %v\n", tracesPerFile)
 
 	config.workerPayloadPool = NewWorkerPayloadPool(config.WorkerPayloadCreator, datapointsPerTrace)
 

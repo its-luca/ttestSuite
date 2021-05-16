@@ -8,10 +8,20 @@ import (
 	"math/big"
 )
 
-//dotProduct computes the dot product of a and b. If they have different lengths an error is returned
-func dotProduct(a, b []float64) (*big.Float, error) {
+type dotProductBigFunc = func(a, b []float64) (*big.Float, error)
+
+//configures which dot product implementation should be used by default in dependent functions
+var defaultDotProductBig = dotProductOptBig
+var defaultDotProductFloat64 = dotProductFloat64
+
+//dotProductAllBig computes the dot product of a and b. If they have different lengths, or length 0, an error is returned
+//Internally all computations are done as big.Float
+func dotProductAllBig(a, b []float64) (*big.Float, error) {
 	if len(a) != len(b) {
 		return nil, fmt.Errorf("slices have different lenghts")
+	}
+	if len(a) == 0 {
+		return nil, fmt.Errorf("one of the inputs is empty")
 	}
 	prod := big.NewFloat(0)
 	tmp := big.NewFloat(0)
@@ -22,6 +32,52 @@ func dotProduct(a, b []float64) (*big.Float, error) {
 	return prod, nil
 }
 
+//dotProductOptBig computes the dot product of a and b. If they have different lengths, or length 0, an error is returned
+//Internally, summation is done with float64 untill close to maxs/min value. Then result is saved in big.Float.
+//Benchmarking shows this is faster than doing everything as big.Float
+func dotProductOptBig(a, b []float64) (*big.Float, error) {
+	if len(a) != len(b) {
+		return nil, fmt.Errorf("slices have different lenghts")
+	}
+	if len(a) == 0 {
+		return nil, fmt.Errorf("one of the inputs is empty")
+	}
+
+	//find biggest square
+	maxVal := a[0] * b[0]
+	minVal := a[0] * b[0]
+	var p float64
+	for i := range a {
+		p = a[i] * b[i]
+		if p > maxVal {
+			maxVal = p
+		}
+		if p < minVal {
+			minVal = p
+		}
+	}
+	absOfLargestNegAddend := math.Abs(minVal)
+	sum := big.NewFloat(0)
+	partialSum := float64(0)
+	var prod float64
+	upperBound := math.MaxFloat64 - maxVal
+	lowerBound := -math.MaxFloat64 - absOfLargestNegAddend
+	for i := range a {
+		prod = a[i] * b[i]
+		//check if adding prod could lead to out of bounds, if so, add
+		//to float and reset to current value
+		if (partialSum < upperBound) && (partialSum > lowerBound) {
+			partialSum += prod
+		} else {
+			sum.Add(sum, big.NewFloat(partialSum))
+			partialSum = prod
+		}
+	}
+	sum.Add(sum, big.NewFloat(partialSum))
+	return sum, nil
+}
+
+//dotProductFloat64, computes the dot product of a and b. If they have different lengths, or length 0, an error is returned.
 func dotProductFloat64(a, b []float64) (float64, error) {
 	if len(a) != len(b) {
 		return 0, fmt.Errorf("slices have different lenghts")
@@ -43,33 +99,35 @@ func dotProductFloat64(a, b []float64) (float64, error) {
 	return sum, nil
 }
 
-func NormalizedCrossCorrelateFloat64AgainstTotal(a []float64, b []float64) (float64, error) {
-	Rab, err := dotProductFloat64(a, b)
+//NormalizedCrossCorrelateFloat64 implements matlab's xcorr(a,b,0,'normalized')
+func NormalizedCrossCorrelateFloat64(a []float64, b []float64) (float64, error) {
+	Rab, err := defaultDotProductFloat64(a, b)
 	if err != nil {
 		return 0, err
 	}
-	Raa, err := dotProductFloat64(a, a)
+	Raa, err := defaultDotProductFloat64(a, a)
 	if err != nil {
 		return 0, err
 	}
-	Rbb, err := dotProductFloat64(b, b)
+	Rbb, err := defaultDotProductFloat64(b, b)
 	if err != nil {
 		return 0, err
 	}
 	return Rab / (math.Sqrt(Raa * Rbb)), nil
 }
 
-//NormalizedCrossCorrelateAgainstTotal implements matlab's xcorr(a,b,0,'normalized')
-func NormalizedCrossCorrelateAgainstTotal(a []float64, b []float64) (*big.Float, error) {
-	Rab, err := dotProduct(a, b)
+//NormalizedCrossCorrelationBig implements matlab's xcorr(a,b,0,'normalized'). Before normalization
+//all computations are done with big.Float value range
+func NormalizedCrossCorrelationBig(a []float64, b []float64) (*big.Float, error) {
+	Rab, err := defaultDotProductBig(a, b)
 	if err != nil {
 		return nil, err
 	}
-	Raa, err := dotProduct(a, a)
+	Raa, err := defaultDotProductBig(a, a)
 	if err != nil {
 		return nil, err
 	}
-	Rbb, err := dotProduct(b, b)
+	Rbb, err := defaultDotProductBig(b, b)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +140,9 @@ type xCorrJob struct {
 	resPTR         *float64
 }
 
-//computeCorrelation, computes correlation between s.pwMeanFixed and all the fixed case traces returned by traceReader
-func computeCorrelation(ctx context.Context, workerCount int, refereceTrace []float64, traces [][]float64) ([]float64, error) {
+//ComputeCorrelation computes correlation between refereceTrace and all entries of traces using NormalizedCrossCorrelationBig in
+//a parallelized manner
+func ComputeCorrelation(ctx context.Context, workerCount int, refereceTrace []float64, traces [][]float64) ([]float64, error) {
 
 	if len(traces) == 0 {
 		return nil, fmt.Errorf("traces is empty")
@@ -94,28 +153,19 @@ func computeCorrelation(ctx context.Context, workerCount int, refereceTrace []fl
 
 	workers, ctx := errgroup.WithContext(ctx)
 
-	//fed by decoder, processed by workers
 	jobs := make(chan xCorrJob)
 
 	//spawn workers
 	for i := 0; i < workerCount; i++ {
 		workers.Go(func() error {
 			for j := range jobs {
-				corr, err := NormalizedCrossCorrelateAgainstTotal(j.referenceTrace, j.trace)
+				corr, err := NormalizedCrossCorrelationBig(j.referenceTrace, j.trace)
 				if err != nil {
 					return fmt.Errorf("failed to calc correlation : %v", err)
 				}
-				//write back result
+				//write result into assigned mem addr
 				floatCorr, _ := corr.Float64()
 				*(j.resPTR) = floatCorr
-
-				/*
-					corr, err := NormalizedCrossCorrelateFloat64AgainstTotal(j.referenceTrace,j.trace)
-					if err != nil {
-						return fmt.Errorf("failed to calc correlation : %v", err)
-					}
-					*(j.resPTR) = corr
-				*/
 			}
 			return nil
 		})
