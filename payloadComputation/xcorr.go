@@ -174,17 +174,17 @@ func ComputeCorrelation(ctx context.Context, workerCount int, refereceTrace []fl
 	//feed jobs
 	traceIDX := 0
 	for traceIDX < len(traces) {
+		j := xCorrJob{
+			referenceTrace: refereceTrace,
+			trace:          traces[traceIDX],
+			resPTR:         &(normalizedCorrelationValues[traceIDX]),
+		}
 		select {
 		case <-ctx.Done():
 			break
-		default:
-			jobs <- xCorrJob{
-				referenceTrace: refereceTrace,
-				trace:          traces[traceIDX],
-				resPTR:         &(normalizedCorrelationValues[traceIDX]),
-			}
-			traceIDX++
+		case jobs <- j:
 		}
+		traceIDX++
 	}
 	close(jobs)
 
