@@ -220,8 +220,20 @@ func (config *ComputationRuntime) feederWorker(ctx context.Context, start, end i
 				}
 				readTimeSinceLastTick += time.Since(startTime)
 				startTime = time.Now()
-				syncVars.jobs <- flb
-				qualityControlJobs <- flb
+				//on context cancel we cannot guarantee that this channel is still open
+				select {
+				case <-ctx.Done():
+					config.ErrLog.Printf("Early feeder quit due to abort signal")
+					return
+				case syncVars.jobs <- flb:
+				}
+				//on context cancel we cannot guarantee that this channel is still open
+				select {
+				case <-ctx.Done():
+					config.ErrLog.Printf("Early feeder quit due to abort signal")
+					return
+				case qualityControlJobs <- flb:
+				}
 				enqueueWaitSinceLastTick += time.Since(startTime)
 				processedElements++
 				config.MetrReadFilesCount.Inc()
@@ -363,14 +375,27 @@ func (config *ComputationRuntime) computeWorker(ctx context.Context, workerID, t
 
 					//send either as snapshotDeltaShard or as final result
 					if curSnapshotIDX <= maxSnapshotIDX {
-						snapshotResults <- snapshotDeltaShard{
+						shard := snapshotDeltaShard{
 							data:           payload,
 							snapshotIDX:    curSnapshotIDX,
 							processedFiles: filesSinceLastSnapshot,
 							workerID:       workerID,
 						}
+						//on context cancel we cannot guarantee that this channel is still open
+						select {
+						case <-ctx.Done():
+							config.ErrLog.Printf("Worker %v quits due to shutdown signal\n", workerID)
+							return
+						case snapshotResults <- shard:
+						}
 					} else {
-						resultChan <- payload
+						//on context cancel we cannot guarantee that this channel is still open
+						select {
+						case <-ctx.Done():
+							config.ErrLog.Printf("Worker %v quits due to shutdown signal\n", workerID)
+							return
+						case resultChan <- payload:
+						}
 					}
 					return
 				}
@@ -380,11 +405,18 @@ func (config *ComputationRuntime) computeWorker(ctx context.Context, workerID, t
 				//on to the next interval
 				if curSnapshotIDX <= maxSnapshotIDX && workPackage.fileIDX >= (curSnapshotIDX*snapshotInterval+snapshotInterval) {
 					config.DebugLog.Printf("worker %v: sending data for snapshotIDX %v : %v files\n", workerID, curSnapshotIDX, filesSinceLastSnapshot)
-					snapshotResults <- snapshotDeltaShard{
+					shard := snapshotDeltaShard{
 						data:           payload,
 						snapshotIDX:    curSnapshotIDX,
 						processedFiles: filesSinceLastSnapshot,
 						workerID:       workerID,
+					}
+					//on context cancel we cannot guarantee that this channel is still open
+					select {
+					case <-ctx.Done():
+						config.ErrLog.Printf("Worker %v quits due to shutdown signal\n", workerID)
+						return
+					case snapshotResults <- shard:
 					}
 					//skip forward to interval to which workPackage.fileIDX belongs
 					for workPackage.fileIDX >= (curSnapshotIDX+1)*snapshotInterval {
@@ -519,6 +551,7 @@ func (config *ComputationRuntime) snapshoter(ctx context.Context, snapshotWg *sy
 			//this should never happen
 			if receivedFilesForSnapshotDelta[deltaShard.snapshotIDX] > config.SnapshotInterval {
 				errorChan <- fmt.Errorf("snapshotter: received %v files for snapshotIDX %v but only expected %v\n", receivedFilesForSnapshotDelta[deltaShard.snapshotIDX], deltaShard.snapshotIDX, config.SnapshotInterval)
+				return
 			}
 
 			//if we do not have all shards for this delta we can abort here
