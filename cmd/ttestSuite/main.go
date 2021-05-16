@@ -40,7 +40,6 @@ type application struct {
 	fileBufferInGB   int
 	streamFromAddr   string
 	outFolderPath    string
-	tTestThreshold   float64
 	snapshotInterval int
 	//if set and streamFromAddr = "", use reader accessing the files in reverse order
 	reverseOrder         bool
@@ -197,7 +196,6 @@ func ParseAndValidateFlags() (*application, error) {
 	fileBufferInGB := cmdFlags.Int("fileBufferInGB", 1, "Memory allowed for buffering input files in GB")
 	streamFromAddr := cmdFlags.String("streamFromAddr", "", "If set, we will listen on the provided addr to receive updates about file availability. Files are still read from disk!")
 	outFolderPath := cmdFlags.String("outFolderPath", "", "Directory path for saving results. Defaults creating a folder name after pathTraceFolder in the current directory")
-	tTestThreshold := cmdFlags.Float64("tTestThresh", 6, "Threshold value for t-test plot")
 	snapshotInterval := cmdFlags.Int("snapshotInterval", 0, "Save intermediate result every x trace files")
 	payloadName := cmdFlags.String("payloadComputation", "ttest", fmt.Sprintf("Choose which of the following computation should be performed on the data: %s", payloadComputation.GetAvailablePayloads()))
 	reverseOrder := cmdFlags.Bool("reverseOrder", false, "Access trace files in reversed order. Not applicable to streaming mode.")
@@ -296,7 +294,6 @@ func ParseAndValidateFlags() (*application, error) {
 		fileBufferInGB:       *fileBufferInGB,
 		streamFromAddr:       *streamFromAddr,
 		outFolderPath:        *outFolderPath,
-		tTestThreshold:       *tTestThreshold,
 		snapshotInterval:     *snapshotInterval,
 		workerPayloadCreator: workerPayloadCreator,
 		reverseOrder:         *reverseOrder,
