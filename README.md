@@ -21,7 +21,7 @@ For a basic usage is suffices to pass the  following arguments:
 - `-traceFolder` point to a folder with WFM files named `trace (x).wfm` where x in the range `[1,traceFileCount]`.
 - `-caseFile` name of a text file in  `traceFolder`, containing as many lines as traces (not trace/wfm files). Each line may either
   contain `0` to indicate that this trace belongs to the fixed set, or `1` to indicate that it belongs to the random set.
-- `-caseFileCount` number of case files that should be processed.
+- `-traceFileCount` number of case files that should be processed.
 
 To activate the streaming mode use the  `-streamFromAddr <ip:port>` argument .
 Now ttestSuite is listening `<ip:port>` waiting to be controlled via two http endpoints (see `examples/measure-dummy.py`).
