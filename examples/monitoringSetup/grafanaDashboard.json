@@ -228,7 +228,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "(ttestsuite_compr_input_file_count{job=\"$job\"}-ttestsuite_compr_processed_files_count{job=\"$job\"})*rate(ttestsuite_compr_processed_files_count{job=\"$job\"}[30s])",
+          "expr": "(ttestsuite_compr_input_file_count{job=\"$job\"}-ttestsuite_compr_processed_files_count{job=\"$job\"})/rate(ttestsuite_compr_processed_files_count{job=\"$job\"}[4m])",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
