@@ -8,6 +8,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/its-luca/ttestSuite/payloadComputation"
+	"github.com/its-luca/ttestSuite/traceSource"
+	"github.com/its-luca/ttestSuite/wfm"
 	"github.com/pbnjay/memory"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -26,9 +29,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"ttestSuite/payloadComputation"
-	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
 )
 
 //application bundles the command line configuration options

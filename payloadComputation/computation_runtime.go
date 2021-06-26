@@ -7,14 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/its-luca/ttestSuite/traceSource"
+	"github.com/its-luca/ttestSuite/wfm"
 	"github.com/prometheus/client_golang/prometheus"
 	"log"
 	"math"
 	"sort"
 	"sync"
 	"time"
-	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
 )
 
 //Giga SI unit prefix

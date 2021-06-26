@@ -7,11 +7,11 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/its-luca/ttestSuite/tPlot"
 	"io"
 	"math"
 	"reflect"
 	"sync"
-	"ttestSuite/tPlot"
 )
 
 var ErrOneSetEmpty = errors.New("cannot compute, at least one of the sets is empty")

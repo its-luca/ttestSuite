@@ -1,9 +1,9 @@
 package main
 
 import (
+	"github.com/its-luca/ttestSuite/mocks"
+	"github.com/its-luca/ttestSuite/testUtils"
 	"testing"
-	"ttestSuite/mocks"
-	"ttestSuite/testUtils"
 )
 
 func Test_computeCorrelation(t *testing.T) {

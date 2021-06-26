@@ -2,9 +2,9 @@ package traceSource
 
 import (
 	"fmt"
+	"github.com/its-luca/ttestSuite/wfm"
 	"io/ioutil"
 	"path/filepath"
-	"ttestSuite/wfm"
 )
 
 //TraceFileReader reads trace files folderPath using the passed idToFileName function to generate on order on the files.

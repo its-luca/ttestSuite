@@ -3,10 +3,10 @@ package payloadComputation
 import (
 	"context"
 	"fmt"
+	"github.com/its-luca/ttestSuite/testUtils"
 	"math/big"
 	"math/rand"
 	"testing"
-	"ttestSuite/testUtils"
 )
 
 func setupBench() ([]float64, []float64) {

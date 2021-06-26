@@ -5,13 +5,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	mockTraceSource "github.com/its-luca/ttestSuite/mocks/traceSource"
+	"github.com/its-luca/ttestSuite/mocks/wfm"
+	"github.com/its-luca/ttestSuite/traceSource"
+	"github.com/its-luca/ttestSuite/wfm"
 	"math"
 	"strconv"
 	"strings"
-	mockTraceSource "ttestSuite/mocks/traceSource"
-	"ttestSuite/mocks/wfm"
-	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
 )
 
 //ParseCSVToFloat64 takes a raw csv file and parses each line as into a float64 slice

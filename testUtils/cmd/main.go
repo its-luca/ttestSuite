@@ -7,9 +7,9 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"github.com/its-luca/ttestSuite/testUtils"
 	"log"
 	"os"
-	"ttestSuite/testUtils"
 )
 
 func main() {

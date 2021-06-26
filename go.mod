@@ -1,4 +1,4 @@
-module ttestSuite
+module github.com/its-luca/ttestSuite
 
 go 1.15
 

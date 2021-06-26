@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/its-luca/ttestSuite/wfm"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"path/filepath"
-	"ttestSuite/wfm"
 )
 
 //StreamingTraceFileReader does not expect all files to be available from the start but allows to receive updates

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/its-luca/ttestSuite/mocks"
 	"io"
 	"log"
 	"testing"
 	"time"
-	"ttestSuite/mocks"
 )
 
 type mockFailingTraceReader struct {

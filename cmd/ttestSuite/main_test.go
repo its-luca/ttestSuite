@@ -3,15 +3,15 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/its-luca/ttestSuite/mocks"
+	"github.com/its-luca/ttestSuite/payloadComputation"
+	"github.com/its-luca/ttestSuite/testUtils"
 	"io"
 	"io/ioutil"
 	"log"
 	"math"
 	"path/filepath"
 	"testing"
-	"ttestSuite/mocks"
-	"ttestSuite/payloadComputation"
-	"ttestSuite/testUtils"
 )
 
 //Test_IntegrationTestTTest calls Run with WelchTTest payload using a real wfm file parser and compares against

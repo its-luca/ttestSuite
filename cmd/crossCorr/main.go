@@ -5,6 +5,9 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"github.com/its-luca/ttestSuite/payloadComputation"
+	"github.com/its-luca/ttestSuite/traceSource"
+	"github.com/its-luca/ttestSuite/wfm"
 	"golang.org/x/sync/errgroup"
 	"io"
 	"log"
@@ -13,9 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"ttestSuite/payloadComputation"
-	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
 )
 
 type partialTTestState struct {

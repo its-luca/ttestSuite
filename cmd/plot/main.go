@@ -5,10 +5,10 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"github.com/its-luca/ttestSuite/tPlot"
 	"log"
 	"os"
 	"strconv"
-	"ttestSuite/tPlot"
 )
 
 func main() {
