@@ -11,66 +11,44 @@ import (
 	"testing"
 	"ttestSuite/mocks"
 	"ttestSuite/payloadComputation"
-	"ttestSuite/traceSource"
-	"ttestSuite/wfm"
+	"ttestSuite/testUtils"
 )
-
-type mockManyFileSimTraceFileReader struct {
-	totalFileCount int
-	file           []byte
-	caseLog        []int
-}
-
-func (m *mockManyFileSimTraceFileReader) TotalBlockCount() int {
-	return m.totalFileCount
-}
-
-func (m *mockManyFileSimTraceFileReader) GetBlock(_ int) ([]byte, []int, error) {
-	return m.file, m.caseLog, nil
-}
 
 //Test_IntegrationTestTTest calls Run with WelchTTest payload using a real wfm file parser and compares against
 //known results from the old matlab implementation
 func Test_IntegrationTestTTest(t *testing.T) {
-	//load correct results from csv file
-	csvData, err := ioutil.ReadFile("../../testData/correct-t-values.csv")
+	//load correct results from csv file. We generated them fromt he matlab implementation
+	csvData, err := ioutil.ReadFile("../../testData/Test_IntegrationTestTTest-want-t-values.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
 	}
-
 	tmp, err := mocks.ParseCSVToFloat64(csvData)
 	if err != nil {
 		t.Fatalf("Failed to parse correct t test values from file %v\n", err)
 	}
 	wanTValues := tmp[0]
-	rawCaseFile, err := ioutil.ReadFile("../../testData/sample-case-log.txt")
-	if err != nil {
-		t.Fatalf("Failed to read case file : %v\n", err)
+
+	//regenerate trace data via determenistic rng
+	dRNGValues := testUtils.DRNGFloat64Slice(50000, 486)
+	fakeFileTraces := [][]float64{
+		dRNGValues[:10000],
+		dRNGValues[10000:20000],
+		dRNGValues[20000:30000],
+		dRNGValues[30000:40000],
+		dRNGValues[40000:50000],
 	}
-	caseLog, err := traceSource.ParseCaseLog(rawCaseFile)
+	fakeFiles := [][][]float64{fakeFileTraces, fakeFileTraces}
+	fakeFilesCaseData := [][]int{
+		{0, 1, 1, 0, 0},
+		{1, 0, 1, 1, 0},
+	}
+	fakeSource, fakeParser, err := mocks.CreateFloatSourceParserPair(fakeFiles, fakeFilesCaseData, -1)
 	if err != nil {
-		t.Fatalf("Failed to parse case log file")
+		t.Fatalf("Failed to setup trace source : %v", err)
 	}
 
-	rawTraceFile, err := ioutil.ReadFile("../../testData/trace (1).wfm")
-	if err != nil {
-		t.Fatalf("Failed to read trace file : %v\n", err)
-	}
+	//setup ttest execution
 
-	simManyFilesReader := &mockManyFileSimTraceFileReader{
-		totalFileCount: 5,
-		file:           rawTraceFile,
-		caseLog:        caseLog,
-	}
-
-	//prepare caseLog for repeated reading
-	tmpCaseLog := make([]int, 0, simManyFilesReader.totalFileCount*len(caseLog))
-	for i := 0; i < simManyFilesReader.totalFileCount; i++ {
-		tmpCaseLog = append(tmpCaseLog, caseLog...)
-	}
-	caseLog = tmpCaseLog
-	simManyFilesReader.caseLog = caseLog
-	//hacky file reader setup done
 	creator, err := payloadComputation.GetWorkerPayloadCreator("ttest")
 	if err != nil {
 		t.Fatalf("failed to setup worker payload creator for test : %v\n", err)
@@ -87,7 +65,9 @@ func Test_IntegrationTestTTest(t *testing.T) {
 		t.Fatalf("Failed to setup computation runtime for test : %v", err)
 	}
 
-	payload, err := config.Run(context.Background(), simManyFilesReader, wfm.Parser{})
+	//run test
+
+	payload, err := config.Run(context.Background(), fakeSource, fakeParser)
 	if err != nil {
 		t.Fatalf("Ttest failed : %v\n", err)
 	}
@@ -96,6 +76,8 @@ func Test_IntegrationTestTTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error finalizing payload computation : %v\n", err)
 	}
+
+	//check results
 
 	if gotLen, wantLen := len(gotTValues), len(wanTValues); gotLen != wantLen {
 		t.Errorf("wanted %v values got %v valuesan", wantLen, gotLen)

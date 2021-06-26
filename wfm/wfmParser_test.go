@@ -44,18 +44,20 @@ func ParseCSVToFloat64(csvData []byte) ([][]float64, error) {
 //against known values from the old matlab implementation
 func TestParser_ParseTracesParseTraces(t *testing.T) {
 	//load correct results from csv file
-	csvData, err := ioutil.ReadFile("../testData/correct-first-3-rows.csv")
+	const wantFrames = 10
+	const wantPointsPerTrace = 1250
+	csvData, err := ioutil.ReadFile("../testData/trace-10-frames-a-1250-points-want-flat.csv")
 	if err != nil {
 		t.Fatalf("Failed to load test data file : %v\n", err)
 	}
 
-	correctTraces, err := ParseCSVToFloat64(csvData)
+	wantTraceDataFlat, err := ParseCSVToFloat64(csvData)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	//load test input
-	rawWFM, err := ioutil.ReadFile("../testData/trace (1).wfm")
+	rawWFM, err := ioutil.ReadFile("../testData/trace-10-frames-a-1250-points.wfm")
 	if err != nil {
 		t.Fatalf("Failed to read test input :%v\n", err)
 	}
@@ -67,19 +69,19 @@ func TestParser_ParseTracesParseTraces(t *testing.T) {
 	}
 
 	//we only check the first few traces
-	if len(frames) < len(correctTraces) {
-		t.Fatalf("ouput needs at least %v traces for the test but we got %v", len(correctTraces), len(frames))
+	if len(frames) != wantFrames {
+		t.Fatalf("expected  %v frames got %v", frames, len(frames))
 	}
 
 	errCounter := 0
 	errThresh := 5
 	//compare output
-	for traceIDX := range correctTraces {
-		if gotLen, wantLen := len(frames[traceIDX]), len(correctTraces[traceIDX]); gotLen != wantLen {
-			t.Errorf("trace %v has length %v but we want %v\n", traceIDX, gotLen, wantLen)
+	for traceIDX := range wantTraceDataFlat {
+		if gotLen := len(frames[traceIDX]); gotLen != wantPointsPerTrace {
+			t.Errorf("trace %v has length %v but we want %v\n", traceIDX, gotLen, wantPointsPerTrace)
 		}
 		for i := range frames {
-			if got, want := frames[traceIDX][i], correctTraces[traceIDX][i]; math.Abs(got-want) > 0.001 {
+			if got, want := frames[traceIDX][i], wantTraceDataFlat[0][traceIDX*wantPointsPerTrace+i]; math.Abs(got-want) > 0.001 {
 				t.Errorf("trace %v entry %v got %v want %v\n", traceIDX, i, got, want)
 				errCounter++
 				if errCounter > errThresh {

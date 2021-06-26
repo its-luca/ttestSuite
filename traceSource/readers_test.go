@@ -16,7 +16,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	//setup
 	const wantTotalFileCount = 5
 	const folderPath = "../testData"
-	const traceFileName = "trace (1).wfm"
+	const traceFileName = "trace-10-frames-a-1250-points.wfm"
 	traceFilePath := filepath.Join(folderPath, traceFileName)
 	const caseFileName = "tmp-case-file.txt"
 	newFiles := make(chan string)
@@ -25,7 +25,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read test file %v\n", err)
 	}
-	rawCaseFile, err := ioutil.ReadFile(filepath.Join(folderPath, "sample-case-log.txt"))
+	rawCaseFile, err := ioutil.ReadFile(filepath.Join(folderPath, "trace-10-frames-a-1250-points-sample-case-log.csv.txt"))
 	if err != nil {
 		t.Fatalf("Failed to read raw case file %v\n", err)
 	}
@@ -61,14 +61,14 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	}()
 
 	//# test behaviour
-	r := NewStreamingTraceFileReader(wantTotalFileCount, folderPath, caseFileName, newFiles)
+	streamingReader := NewStreamingTraceFileReader(wantTotalFileCount, folderPath, caseFileName, newFiles)
 
-	if gotTotalBlockCount := r.TotalBlockCount(); gotTotalBlockCount != wantTotalFileCount {
+	if gotTotalBlockCount := streamingReader.TotalBlockCount(); gotTotalBlockCount != wantTotalFileCount {
 		t.Errorf("want totalBlockCount %v, got %v", wantTotalFileCount, gotTotalBlockCount)
 	}
 
 	checkFile := func(nr int) {
-		gotTraceFile, gotCaseData, err := r.GetBlock(nr)
+		gotTraceFile, gotCaseData, err := streamingReader.GetBlock(nr)
 		if err != nil {
 			t.Fatalf("unexpected error reading file number %v : %v\n", nr, err)
 		}
@@ -98,7 +98,7 @@ func TestStreamingTraceFileReader_GetBlock(t *testing.T) {
 	checkFile(0)
 
 	//reading out of bounds should give error
-	_, _, err = r.GetBlock(wantTotalFileCount)
+	_, _, err = streamingReader.GetBlock(wantTotalFileCount)
 	//WANT ERROR
 	if err == nil {
 		t.Errorf("reading out of bounds, expected err got none")
