@@ -127,7 +127,11 @@ func computeCorrelation(traceReader traceSource.TraceBlockReader, parser wfm.Tra
 	input := make(chan blockBundle, 10)
 
 	//spawn workers
-	for i := 0; i < runtime.NumCPU()-2; i++ {
+	workerCount := runtime.NumCPU() - 2
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	for i := 0; i < workerCount; i++ {
 		workers.Go(func() error {
 			for j := range jobs {
 				corr, err := payloadComputation.NormalizedCrossCorrelationBig(j.pwMeanFixed, j.trace)
